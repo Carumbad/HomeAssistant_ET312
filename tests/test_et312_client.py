@@ -24,7 +24,9 @@ from custom_components.et312.et312 import (
     build_cipher_mask,
     flip_nibbles,
     raw_level_byte_to_ui_99,
+    raw_multi_adjust_to_ui_99,
     ui_99_to_raw_byte,
+    ui_multi_adjust_to_raw_byte,
 )
 
 
@@ -49,6 +51,13 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw_level_byte_to_ui_99(0x00), 0)
         self.assertEqual(raw_level_byte_to_ui_99(0x1C), 10)
         self.assertEqual(raw_level_byte_to_ui_99(0xFF), 99)
+
+    def test_multi_adjust_scale_is_inverted(self) -> None:
+        """MA should read and write opposite to the raw byte direction."""
+        self.assertEqual(raw_multi_adjust_to_ui_99(0xFF), 0)
+        self.assertEqual(raw_multi_adjust_to_ui_99(0x00), 99)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(0), 0xFF)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(99), 0x00)
 
     def test_flip_nibbles(self) -> None:
         """The ET312 host key uses nibble-flipping before XOR mask derivation."""
@@ -127,7 +136,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.power_level_a, 10)
         self.assertEqual(state.power_level_b, 99)
         self.assertEqual(state.battery_percent, 34)
-        self.assertEqual(state.multi_adjust, 21)
+        self.assertEqual(state.multi_adjust, 78)
         self.assertTrue(state.front_panel_controls_disabled)
 
     async def test_set_multi_adjust_writes_expected_register(self) -> None:
@@ -146,7 +155,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
             client.async_write_register.await_args_list,
             [
                 unittest.mock.call(REG_CONTROL_FLAGS, [CONTROL_FLAG_DISABLE_KNOBS]),
-                unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(50)]),
+                unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_multi_adjust_to_raw_byte(50)]),
             ],
         )
 

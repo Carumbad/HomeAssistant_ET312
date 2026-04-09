@@ -34,7 +34,9 @@ from custom_components.et312.et312 import (
     decode_read_response,
     raw_byte_to_ui_99,
     raw_level_byte_to_ui_99,
+    raw_multi_adjust_to_ui_99,
     ui_99_to_raw_byte,
+    ui_multi_adjust_to_raw_byte,
 )
 
 
@@ -399,7 +401,7 @@ class Bridge:
             raise RuntimeError(f"Unsupported ET312 multi-adjust value: {value}")
         current_flags = self._get_control_flags()
         self._set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
-        self._write_register(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(value)])
+        self._write_register(REG_MULTI_ADJUST_VALUE, [ui_multi_adjust_to_raw_byte(value)])
 
     def publish_state(self) -> None:
         """Publish the current ET312 state as retained JSON."""
@@ -414,7 +416,9 @@ class Bridge:
                 "power_level_a": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_A_LEVEL)),
                 "power_level_b": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_B_LEVEL)),
                 "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
-                "multi_adjust": raw_byte_to_ui_99(self._read_register(REG_MULTI_ADJUST_VALUE)),
+                "multi_adjust": raw_multi_adjust_to_ui_99(
+                    self._read_register(REG_MULTI_ADJUST_VALUE)
+                ),
                 "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
                 "available_modes": [ROUTINES[code] for code in sorted(ROUTINES)],
             }
