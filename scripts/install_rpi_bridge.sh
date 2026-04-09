@@ -5,7 +5,7 @@ set -euo pipefail
 SERVICE_NAME="et312-mqtt-bridge"
 SERVICE_USER="et312"
 INSTALL_DIR="/opt/et312-mqtt-bridge"
-CONFIG_FILE="/etc/default/${SERVICE_NAME}"
+CONFIG_FILE="${INSTALL_DIR}/config/${SERVICE_NAME}.env"
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -167,7 +167,7 @@ install_app_files() {
 }
 
 write_config() {
-  install -m 0750 -d "$(dirname "${CONFIG_FILE}")"
+  install -m 0750 -o root -g "${SERVICE_USER}" -d "$(dirname "${CONFIG_FILE}")"
 
   cat > "${CONFIG_FILE}" <<EOF
 DEVICE="${DEVICE}"
@@ -188,11 +188,19 @@ EOF
 }
 
 write_systemd_unit() {
+  local unit_after="After=network-online.target"
+  local unit_wants="Wants=network-online.target"
+
+  if [[ "${DEVICE}" == /dev/rfcomm* ]]; then
+    unit_after="After=network-online.target et312-rfcomm.service"
+    unit_wants="Wants=network-online.target et312-rfcomm.service"
+  fi
+
   cat > "${SYSTEMD_UNIT}" <<EOF
 [Unit]
 Description=ET312 MQTT Bridge
-After=network-online.target
-Wants=network-online.target
+${unit_after}
+${unit_wants}
 
 [Service]
 Type=simple

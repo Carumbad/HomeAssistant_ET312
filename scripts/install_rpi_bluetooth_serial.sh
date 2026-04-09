@@ -3,14 +3,14 @@
 set -euo pipefail
 
 SERVICE_NAME="et312-rfcomm"
-CONFIG_FILE="/etc/default/${SERVICE_NAME}"
+CONFIG_FILE="${INSTALL_DIR}/config/${SERVICE_NAME}.env"
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
 INSTALL_DIR="/opt/et312-mqtt-bridge"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ET312_MAC=""
 RFCOMM_DEVICE="/dev/rfcomm0"
-RFCOMM_CHANNEL="1"
+RFCOMM_CHANNEL=""
 SCAN_SECONDS="15"
 
 usage() {
@@ -19,9 +19,9 @@ Usage:
   sudo ./scripts/install_rpi_bluetooth_serial.sh --mac AA:BB:CC:DD:EE:FF [options]
 
 Options:
-  --mac MAC                 Bluetooth MAC address of the ET312. Required.
+  --mac MAC                 Bluetooth MAC address of the ET312 Audio device. Required.
   --rfcomm-device PATH      Serial mapping to create. Default: ${RFCOMM_DEVICE}
-  --rfcomm-channel CHANNEL  RFCOMM channel. Default: ${RFCOMM_CHANNEL}
+  --rfcomm-channel CHANNEL  RFCOMM channel. Defaults to SDP autodetect, usually 2.
   --scan-seconds SECONDS    Discovery scan duration before pairing. Default: ${SCAN_SECONDS}
   --help                    Show this help.
 
@@ -93,14 +93,33 @@ sync_launcher_script() {
     --exclude 'References/' \
     --exclude '__pycache__/' \
     --exclude '.DS_Store' \
-    "${REPO_ROOT}/scripts/run_et312_rfcomm.sh" "${INSTALL_DIR}/scripts/"
+    "${REPO_ROOT}/scripts/run_et312_rfcomm.sh" \
+    "${REPO_ROOT}/scripts/release_et312_rfcomm.sh" \
+    "${INSTALL_DIR}/scripts/"
 
   chmod 0755 "${INSTALL_DIR}/scripts/run_et312_rfcomm.sh"
+  chmod 0755 "${INSTALL_DIR}/scripts/release_et312_rfcomm.sh"
 }
 
 prepare_bluetooth() {
   rfkill unblock bluetooth || true
   systemctl enable --now bluetooth
+}
+
+detect_rfcomm_channel() {
+  if [[ -n "${RFCOMM_CHANNEL}" ]]; then
+    return
+  fi
+
+  local detected
+  detected="$(sdptool search --bdaddr "${ET312_MAC}" SP 2>/dev/null | awk '/Channel:/ {print $2; exit}')"
+
+  if [[ -n "${detected}" ]]; then
+    RFCOMM_CHANNEL="${detected}"
+    return
+  fi
+
+  RFCOMM_CHANNEL="2"
 }
 
 pair_et312() {
@@ -120,13 +139,13 @@ EOF
 scan off
 pair ${ET312_MAC}
 trust ${ET312_MAC}
-connect ${ET312_MAC}
+info ${ET312_MAC}
 quit
 EOF
 }
 
 write_config() {
-  install -m 0755 -d "$(dirname "${CONFIG_FILE}")"
+  install -m 0750 -o root -g root -d "$(dirname "${CONFIG_FILE}")"
 
   cat > "${CONFIG_FILE}" <<EOF
 ET312_BLUETOOTH_MAC="${ET312_MAC}"
@@ -145,12 +164,10 @@ After=bluetooth.service network.target
 Requires=bluetooth.service
 
 [Service]
-Type=simple
-EnvironmentFile=${CONFIG_FILE}
+Type=oneshot
+RemainAfterExit=yes
 ExecStart=${INSTALL_DIR}/scripts/run_et312_rfcomm.sh ${CONFIG_FILE}
-ExecStop=/bin/sh -c '. ${CONFIG_FILE}; rfcomm release "$${RFCOMM_DEVICE#/dev/rfcomm}" || true'
-Restart=always
-RestartSec=5
+ExecStop=${INSTALL_DIR}/scripts/release_et312_rfcomm.sh ${CONFIG_FILE}
 
 [Install]
 WantedBy=multi-user.target
@@ -170,6 +187,9 @@ ET312 Bluetooth serial mapping installed.
 Expected serial device:
   ${RFCOMM_DEVICE}
 
+Selected RFCOMM channel:
+  ${RFCOMM_CHANNEL}
+
 Useful commands:
   sudo systemctl status ${SERVICE_NAME}
   sudo journalctl -u ${SERVICE_NAME} -f
@@ -188,6 +208,7 @@ main() {
   sync_launcher_script
   prepare_bluetooth
   pair_et312
+  detect_rfcomm_channel
   write_config
   write_systemd_unit
   enable_service

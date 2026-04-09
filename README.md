@@ -158,7 +158,7 @@ The installer:
 - copies this project into `/opt/et312-mqtt-bridge`
 - creates an `et312` system user
 - grants that user access to `dialout`
-- writes bridge settings to `/etc/default/et312-mqtt-bridge`
+- writes bridge settings to `/opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env`
 - installs and starts a `systemd` service
 
 After install, useful commands are:
@@ -166,7 +166,7 @@ After install, useful commands are:
 ```bash
 sudo systemctl status et312-mqtt-bridge
 sudo journalctl -u et312-mqtt-bridge -f
-sudo editor /etc/default/et312-mqtt-bridge
+sudo editor /opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env
 sudo systemctl restart et312-mqtt-bridge
 ```
 
@@ -178,6 +178,13 @@ is a separate helper script for the Bluetooth stack and RFCOMM mapping:
 ```bash
 sudo ./scripts/install_rpi_bluetooth_serial.sh --mac AA:BB:CC:DD:EE:FF
 ```
+
+Important:
+
+- use the MAC for `Micro312 - Audio`, not `Micro312 - SPP`
+- the ET312's Serial Port service is exposed on the Audio identity
+- the script will try to autodetect the RFCOMM channel with `sdptool`
+- on the hardware we tested, the serial service was on RFCOMM channel `2`
 
 That script:
 

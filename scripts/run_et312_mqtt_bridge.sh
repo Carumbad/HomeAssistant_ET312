@@ -20,6 +20,18 @@ set +a
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+for _ in $(seq 1 20); do
+  if [[ -e "${DEVICE}" ]]; then
+    break
+  fi
+  sleep 1
+done
+
+if [[ ! -e "${DEVICE}" ]]; then
+  echo "Serial device not found: ${DEVICE}" >&2
+  exit 1
+fi
+
 ARGS=(
   "${SCRIPT_DIR}/et312_mqtt_bridge.py"
   "${DEVICE}"
