@@ -163,7 +163,9 @@ The installer:
 - installs and starts a `systemd` service
 
 If you rerun the bridge installer, it reuses the existing virtualenv and only
-downloads Python packages when `pyserial` or `paho-mqtt` are missing.
+downloads Python packages when `pyserial` or `paho-mqtt` are missing. It also
+preserves the existing `/opt/et312-mqtt-bridge/config/` files so the Bluetooth
+RFCOMM settings are not overwritten by the bridge install step.
 
 After install, useful commands are:
 

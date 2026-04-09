@@ -200,7 +200,9 @@ install_app_files() {
   rsync -a --delete \
     --exclude '.git/' \
     --exclude '.githooks/' \
+    --exclude '.venv/' \
     --exclude 'References/' \
+    --exclude 'config/' \
     --exclude '__pycache__/' \
     --exclude '.DS_Store' \
     "${REPO_ROOT}/" "${INSTALL_DIR}/"
@@ -216,6 +218,12 @@ install_app_files() {
 
   chmod 0755 "${INSTALL_DIR}/scripts/install_rpi_bridge.sh"
   chmod 0755 "${INSTALL_DIR}/scripts/run_et312_mqtt_bridge.sh"
+  if [[ -f "${INSTALL_DIR}/scripts/run_et312_rfcomm.sh" ]]; then
+    chmod 0755 "${INSTALL_DIR}/scripts/run_et312_rfcomm.sh"
+  fi
+  if [[ -f "${INSTALL_DIR}/scripts/release_et312_rfcomm.sh" ]]; then
+    chmod 0755 "${INSTALL_DIR}/scripts/release_et312_rfcomm.sh"
+  fi
   chown -R root:root "${INSTALL_DIR}"
 }
 
