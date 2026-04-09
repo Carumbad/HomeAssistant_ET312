@@ -1,0 +1,52 @@
+name: Validate Version Metadata
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Validate manifest version and release tag
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import re
+          import sys
+
+          manifest_path = pathlib.Path("custom_components/et312/manifest.json")
+          manifest = json.loads(manifest_path.read_text())
+          version = manifest.get("version")
+          if not isinstance(version, str):
+              sys.exit("manifest.json is missing a string version")
+
+          if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", version):
+              sys.exit(f"manifest.json version is not SemVer-like: {version}")
+
+          ref_type = os.getenv("GITHUB_REF_TYPE")
+          ref_name = os.getenv("GITHUB_REF_NAME", "")
+          if ref_type == "tag":
+              tag_version = ref_name[1:] if ref_name.startswith("v") else ref_name
+              if tag_version != version:
+                  sys.exit(
+                      "Git tag version does not match manifest.json version: "
+                      f"tag={ref_name} manifest={version}"
+                  )
+
+          print(f"Validated manifest version: {version}")
+          PY

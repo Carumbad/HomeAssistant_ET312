@@ -6,6 +6,34 @@ This is a combination of two things;
 
 I totally just vibe coded the crap out of this with ChatGPT and Codex, so don't blame me if it zaps you in the balls or does something else weird, it seemed to work for me, YMMV.
 
+## Versioning
+
+This repository uses two version sources on purpose:
+
+- `custom_components/et312/manifest.json` `version` is the version Home Assistant shows after install.
+- GitHub Releases are the version HACS shows as the available remote update.
+
+To keep Home Assistant and HACS aligned, use this release pattern:
+
+1. Bump `custom_components/et312/manifest.json` to the next SemVer version.
+2. Merge that change to `main`.
+3. Create a GitHub Release with the matching tag, prefixed with `v`.
+
+Example:
+
+- `manifest.json`: `0.2.0`
+- GitHub release tag: `v0.2.0`
+
+If you skip GitHub Releases, Home Assistant will still show the manifest version,
+but HACS will typically fall back to showing a commit-based version instead of a
+clean SemVer release number.
+
+The repository includes three GitHub Actions to keep this tidy:
+
+- HACS validation
+- Hassfest validation
+- a version-metadata check that makes sure `vX.Y.Z` tags match `manifest.json`
+
 ## Current status
 
 This repository currently contains the Home Assistant-side scaffold and a

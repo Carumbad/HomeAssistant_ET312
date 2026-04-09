@@ -1,13 +1,14 @@
 {
   "domain": "et312",
   "name": "ET312",
-  "codeowners": [],
+  "codeowners": ["@Carumbad"],
   "config_flow": true,
   "dependencies": ["mqtt"],
-  "documentation": "https://github.com/home-assistant/example-custom-config/custom_components/example_load_platform_after",
+  "documentation": "https://github.com/Carumbad/HomeAssistant_ET312#readme",
   "integration_type": "device",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/Carumbad/HomeAssistant_ET312/issues",
   "loggers": ["custom_components.et312"],
   "requirements": ["pyserial-asyncio-fast==0.16"],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
