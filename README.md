@@ -211,6 +211,17 @@ sudo editor /opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env
 sudo systemctl restart et312-mqtt-bridge
 ```
 
+For routine bridge updates on the Pi, use:
+
+```bash
+cd ~/HomeAssistant_ET312
+sudo ./scripts/update_rpi_bridge.sh
+```
+
+That updater pulls the latest checked-out branch, refreshes
+`/opt/et312-mqtt-bridge`, preserves the existing config files, and cleanly
+restarts `et312-rfcomm` and `et312-mqtt-bridge` in the correct order.
+
 ## Raspberry Pi Bluetooth Serial Setup
 
 If the ET312 will connect to the Pi over Bluetooth instead of USB serial, there
