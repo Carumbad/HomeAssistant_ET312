@@ -44,6 +44,7 @@ from .const import (
     REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
     REG_MULTI_ADJUST_VALUE,
+    ROUTINES,
 )
 
 
@@ -73,7 +74,7 @@ class ET312State:
     def from_dict(cls, payload: dict[str, Any]) -> "ET312State":
         """Build ET312 state from an MQTT bridge payload."""
         modes = payload.get("mode_options") or payload.get("available_modes") or [
-            MODES[code] for code in sorted(MODES)
+            ROUTINES[code] for code in sorted(ROUTINES)
         ]
         return cls(
             connected=bool(payload.get("connected", True)),
@@ -430,7 +431,7 @@ class MQTTBridgeTransport(ET312Transport):
                         mode=None,
                         power_level_a=None,
                         power_level_b=None,
-                        mode_options=tuple(MODES[code] for code in sorted(MODES)),
+                        mode_options=tuple(ROUTINES[code] for code in sorted(ROUTINES)),
                         battery_percent=None,
                         multi_adjust=None,
                         front_panel_controls_disabled=False,
@@ -603,7 +604,7 @@ class ET312Client:
             mode=MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
             power_level_a=raw_level_byte_to_ui_99(registers[REG_CHANNEL_A_LEVEL]),
             power_level_b=raw_level_byte_to_ui_99(registers[REG_CHANNEL_B_LEVEL]),
-            mode_options=tuple(MODES[code] for code in sorted(MODES)),
+            mode_options=tuple(ROUTINES[code] for code in sorted(ROUTINES)),
             battery_percent=raw_byte_to_ui_99(registers[REG_BATTERY_PERCENT]),
             multi_adjust=raw_byte_to_ui_99(registers[REG_MULTI_ADJUST_VALUE]),
             front_panel_controls_disabled=bool(
@@ -749,7 +750,7 @@ class ET312Client:
     def _mode_code_from_name(self, mode_name: str) -> int:
         """Resolve a Home Assistant select option to an ET312 mode code."""
         normalized = slugify(mode_name)
-        for code, name in MODES.items():
+        for code, name in ROUTINES.items():
             if slugify(name) == normalized:
                 return code
         raise ET312ConnectionError(f"Unsupported ET312 mode: {mode_name}")

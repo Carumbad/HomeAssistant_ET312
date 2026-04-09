@@ -8,11 +8,13 @@ from unittest.mock import AsyncMock
 from custom_components.et312.const import (
     CONNECTION_SERIAL,
     CONTROL_FLAG_DISABLE_KNOBS,
+    MODES,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
     REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
     REG_MULTI_ADJUST_VALUE,
+    ROUTINES,
 )
 from custom_components.et312.et312 import (
     ET312Client,
@@ -58,6 +60,15 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         """The outbound cipher mask should match the documented ET312 formula."""
         self.assertEqual(build_cipher_mask(0x00, 0x00), 0x55)
         self.assertEqual(build_cipher_mask(0x12, 0x34), 0x40)
+
+    def test_routines_exclude_power_presets(self) -> None:
+        """Routine options should only include runnable programs, not box power presets."""
+        self.assertNotIn("Power On", ROUTINES.values())
+        self.assertNotIn("Low", ROUTINES.values())
+        self.assertNotIn("Normal", ROUTINES.values())
+        self.assertNotIn("High", ROUTINES.values())
+        self.assertIn("Waves", ROUTINES.values())
+        self.assertEqual(MODES[0x6C], "Normal")
 
     async def test_set_mode_writes_expected_command_sequence(self) -> None:
         """Mode changes should write the mode and then queue the ET312 commands."""

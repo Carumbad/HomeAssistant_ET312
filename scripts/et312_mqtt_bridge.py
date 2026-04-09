@@ -22,6 +22,7 @@ from custom_components.et312.const import (
     REG_CHANNEL_B_LEVEL,
     REG_CONTROL_FLAGS,
     REG_MULTI_ADJUST_VALUE,
+    ROUTINES,
 )
 from custom_components.et312.et312 import (
     apply_cipher,
@@ -405,7 +406,7 @@ class Bridge:
             "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
             "multi_adjust": raw_byte_to_ui_99(self._read_register(REG_MULTI_ADJUST_VALUE)),
             "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
-            "available_modes": [MODES[code] for code in sorted(MODES)],
+            "available_modes": [ROUTINES[code] for code in sorted(ROUTINES)],
         }
         publish_info = self.mqtt.publish(
             self.args.state_topic,

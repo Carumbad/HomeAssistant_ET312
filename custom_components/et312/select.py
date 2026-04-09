@@ -7,7 +7,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MODES
+from .const import DOMAIN, ROUTINES
 from .coordinator import ET312DataUpdateCoordinator
 from .entity import ET312CoordinatorEntity
 
@@ -31,12 +31,15 @@ class ET312ModeSelect(ET312CoordinatorEntity, SelectEntity):
         """Initialize the select."""
         super().__init__(coordinator)
         self._attr_unique_id = f"{coordinator.entry.entry_id}_mode_select"
-        self._attr_options = [MODES[code] for code in sorted(MODES)]
+        self._attr_options = [ROUTINES[code] for code in sorted(ROUTINES)]
 
     @property
     def current_option(self) -> str | None:
         """Return the currently selected mode."""
-        return self.coordinator.data.mode
+        mode = self.coordinator.data.mode
+        if mode in self.options:
+            return mode
+        return None
 
     async def async_select_option(self, option: str) -> None:
         """Change the ET312 routine."""

@@ -75,3 +75,9 @@ MODES: dict[int, str] = {
     0x8D: "User 6",
     0x8E: "User 7",
 }
+
+ROUTINES: dict[int, str] = {
+    code: name
+    for code, name in MODES.items()
+    if code >= 0x76
+}
