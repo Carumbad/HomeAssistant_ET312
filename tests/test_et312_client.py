@@ -19,6 +19,8 @@ from custom_components.et312.et312 import (
     ET312Client,
     ET312ConnectionConfig,
     ET312ConnectionError,
+    build_cipher_mask,
+    flip_nibbles,
     raw_power_to_ui,
     ui_power_to_raw,
 )
@@ -51,6 +53,17 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         """UI power values should round-trip closely through the raw mapping."""
         for value in (0, 1, 25, 50, 75, 98, 99):
             self.assertLessEqual(abs(raw_power_to_ui(ui_power_to_raw(value)) - value), 1)
+
+    def test_flip_nibbles(self) -> None:
+        """The ET312 host key uses nibble-flipping before XOR mask derivation."""
+        self.assertEqual(flip_nibbles(0x00), 0x00)
+        self.assertEqual(flip_nibbles(0xAB), 0xBA)
+        self.assertEqual(flip_nibbles(0xF1), 0x1F)
+
+    def test_build_cipher_mask(self) -> None:
+        """The outbound cipher mask should match the documented ET312 formula."""
+        self.assertEqual(build_cipher_mask(0x00, 0x00), 0x55)
+        self.assertEqual(build_cipher_mask(0x12, 0x34), 0x40)
 
     async def test_set_mode_writes_expected_command_sequence(self) -> None:
         """Mode changes should write the mode and then queue the ET312 commands."""

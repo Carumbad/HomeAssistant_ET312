@@ -153,11 +153,20 @@ def calculate_checksum(data: list[int]) -> int:
     return sum(data) & 0xFF
 
 
-def apply_cipher(data: list[int], key: int | None) -> list[int]:
-    """Apply the ET312 XOR cipher to packet bytes."""
-    if key is None:
+def flip_nibbles(value: int) -> int:
+    """Flip the high/low nibbles in an ET312 key byte."""
+    return ((value & 0x0F) << 4) | ((value >> 4) & 0x0F)
+
+
+def build_cipher_mask(host_key: int, box_key: int) -> int:
+    """Build the ET312 outbound XOR mask for encrypted host-to-device bytes."""
+    return flip_nibbles(host_key) ^ box_key ^ 0x55
+
+
+def apply_cipher(data: list[int], mask: int | None) -> list[int]:
+    """Apply the ET312 outbound XOR mask to packet bytes."""
+    if mask is None:
         return list(data)
-    mask = key ^ 0x55
     return [byte ^ mask for byte in data]
 
 
@@ -483,7 +492,10 @@ class ET312Client:
         self.timeout = config.timeout
         self.transport = self._build_transport(config)
         self._connected = False
-        self._cipher_key: int | None = None
+        self._host_key = 0x00
+        self._box_key: int | None = None
+        self._cipher_mask: int | None = None
+        self._last_cipher_mask: int | None = None
 
     def _build_transport(self, config: ET312ConnectionConfig) -> ET312Transport:
         """Create the selected ET312 transport."""
@@ -536,7 +548,8 @@ class ET312Client:
         except Exception:
             await self.transport.async_close()
             self._connected = False
-            self._cipher_key = None
+            self._box_key = None
+            self._cipher_mask = None
             raise
 
         self._connected = True
@@ -577,19 +590,20 @@ class ET312Client:
             await self.async_reset_key()
         await self.transport.async_close()
         self._connected = False
-        self._cipher_key = None
+        self._box_key = None
+        self._cipher_mask = None
 
     async def async_read_register(self, address: int) -> int:
         """Read a single ET312 register."""
         payload = build_read_command(address)
-        await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_key)))
+        await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_mask)))
         response = list(await self.transport.async_read(3, timeout=self.timeout))
         return decode_read_response(response)
 
     async def async_write_register(self, address: int, values: list[int]) -> None:
         """Write one or more bytes to an ET312 register."""
         payload = build_write_command(address, values)
-        await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_key)))
+        await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_mask)))
         response = list(await self.transport.async_read(1, timeout=self.timeout))
         decode_write_response(response)
 
@@ -602,10 +616,11 @@ class ET312Client:
 
     async def async_reset_key(self) -> None:
         """Reset the device cipher key if we negotiated one."""
-        if self._cipher_key is None:
+        if self._cipher_mask is None:
             return
         await self.async_write_register(REG_CIPHER_KEY, [0x00])
-        self._cipher_key = None
+        self._box_key = None
+        self._cipher_mask = None
 
     async def async_set_mode(self, mode_name: str) -> None:
         """Switch the ET312 to a new routine/mode."""
@@ -659,7 +674,7 @@ class ET312Client:
     async def async_sync(self) -> None:
         """Realign the ET312 packet stream."""
         for _ in range(12):
-            await self.transport.async_write(bytes(apply_cipher([0x00], self._cipher_key)))
+            await self.transport.async_write(bytes(apply_cipher([0x00], self._cipher_mask)))
             try:
                 response = await self.transport.async_read(1, timeout=0.1)
             except ET312TimeoutError:
@@ -678,17 +693,21 @@ class ET312Client:
         """Try a few sync strategies before giving up on the ET312 session."""
         errors: list[str] = []
 
-        for candidate_key in (None, 0x00):
-            self._cipher_key = candidate_key
+        for candidate_mask in (
+            None,
+            self._last_cipher_mask,
+            build_cipher_mask(self._host_key, 0x00),
+        ):
+            self._cipher_mask = candidate_mask
             try:
                 await self.async_sync()
                 return
             except ET312ConnectionError as err:
-                errors.append(f"key={candidate_key!r}: {err}")
+                errors.append(f"mask={candidate_mask!r}: {err}")
                 await asyncio.sleep(0.2)
                 await self.transport.async_flush_input()
 
-        self._cipher_key = None
+        self._cipher_mask = None
         raise ET312ConnectionError(
             "ET312 synchronisation failed after retrying fallback key handling "
             f"({'; '.join(errors)})"
@@ -696,15 +715,17 @@ class ET312Client:
 
     async def async_setup_keys(self) -> None:
         """Negotiate the ET312 outbound XOR key."""
-        command = [0x2F, 0x00]
+        command = [0x2F, self._host_key]
         payload = command + [calculate_checksum(command)]
 
         try:
-            await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_key)))
+            await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_mask)))
             response = list(await self.transport.async_read(3, timeout=1.0))
         except ET312TimeoutError:
-            if self._cipher_key is None:
-                self._cipher_key = 0x00
+            if self._cipher_mask is None:
+                self._cipher_mask = self._last_cipher_mask or build_cipher_mask(
+                    self._host_key, 0x00
+                )
                 await self.transport.async_flush_input()
                 await self.async_sync()
                 await self.async_setup_keys()
@@ -720,4 +741,6 @@ class ET312Client:
                 f"Unexpected ET312 key setup response: 0x{response[0]:02X}"
             )
 
-        self._cipher_key = response[1]
+        self._box_key = response[1]
+        self._cipher_mask = build_cipher_mask(self._host_key, self._box_key)
+        self._last_cipher_mask = self._cipher_mask
