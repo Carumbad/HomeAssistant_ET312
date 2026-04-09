@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock
 from custom_components.et312.const import (
     CONNECTION_SERIAL,
     CONTROL_FLAG_DISABLE_KNOBS,
-    CONTROL_FLAG_DISABLE_MULTI_ADJUST,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
     REG_CONTROL_FLAGS,
@@ -107,6 +106,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
                 REG_CHANNEL_B_LEVEL: 0xFF,
                 0x4203: 87,
                 0x420D: 55,
+                REG_CONTROL_FLAGS: CONTROL_FLAG_DISABLE_KNOBS,
             }
         )
 
@@ -117,6 +117,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.power_level_b, 99)
         self.assertEqual(state.battery_percent, 34)
         self.assertEqual(state.multi_adjust, 21)
+        self.assertTrue(state.front_panel_controls_disabled)
 
     async def test_set_multi_adjust_writes_expected_register(self) -> None:
         """Multi-adjust writes should enable software control and poke the live MA register."""
@@ -133,12 +134,35 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             client.async_write_register.await_args_list,
             [
-                unittest.mock.call(
-                    REG_CONTROL_FLAGS,
-                    [CONTROL_FLAG_DISABLE_KNOBS | CONTROL_FLAG_DISABLE_MULTI_ADJUST],
-                ),
+                unittest.mock.call(REG_CONTROL_FLAGS, [CONTROL_FLAG_DISABLE_KNOBS]),
                 unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(50)]),
             ],
+        )
+
+    async def test_set_front_panel_controls_disabled_updates_flag(self) -> None:
+        """The front-panel control switch should set the disable-knobs bit."""
+        client = self._make_client()
+        client.async_read_register = AsyncMock(return_value=0x04)
+        client.async_write_register = AsyncMock()
+
+        await client.async_set_front_panel_controls_disabled(True)
+
+        self.assertEqual(
+            client.async_write_register.await_args_list,
+            [unittest.mock.call(REG_CONTROL_FLAGS, [0x04 | CONTROL_FLAG_DISABLE_KNOBS])],
+        )
+
+    async def test_set_front_panel_controls_enabled_clears_flag(self) -> None:
+        """Re-enabling front-panel controls should only clear the disable-knobs bit."""
+        client = self._make_client()
+        client.async_read_register = AsyncMock(return_value=0x0D)
+        client.async_write_register = AsyncMock()
+
+        await client.async_set_front_panel_controls_disabled(False)
+
+        self.assertEqual(
+            client.async_write_register.await_args_list,
+            [unittest.mock.call(REG_CONTROL_FLAGS, [0x0C])],
         )
 
     async def test_invalid_channel_power_is_rejected(self) -> None:

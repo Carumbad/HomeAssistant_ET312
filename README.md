@@ -47,7 +47,7 @@ The integration is now aligned around a transport-agnostic ET312 client:
 - Config flow for choosing either direct serial or MQTT bridge
 - Polling data coordinator
 - Sensor entities for mode, channel power levels, battery, and MA value
-- Control entities for routine selection, channel A/B power setpoints, and MA
+- Control entities for routine selection, channel A/B power setpoints, MA, and front-panel control lockout
 - ET312 packet helpers for checksum, XOR cipher, register reads, and writes
 - Home Assistant MQTT bridge support plus the direct serial path
 
@@ -100,6 +100,7 @@ The bridge publishes retained state JSON to a state topic, for example
   "power_level_b": 12,
   "battery_percent": 72,
   "multi_adjust": 50,
+  "front_panel_controls_disabled": true,
   "available_modes": ["Power On", "Low", "Normal", "High", "Waves"]
 }
 ```
@@ -115,6 +116,7 @@ Home Assistant publishes JSON commands to a command topic, for example
 {"command": "set_power", "channel": "a", "value": 10}
 {"command": "set_power", "channel": "b", "value": 12}
 {"command": "set_multi_adjust", "value": 50}
+{"command": "set_front_panel_controls_disabled", "value": true}
 {"command": "request_state"}
 ```
 
@@ -167,7 +169,7 @@ The bridge:
 - syncs and negotiates the ET312 cipher key
 - publishes retained JSON state to the configured MQTT state topic
 - publishes `online` and `offline` to the availability topic
-- accepts `set_mode`, `set_power`, and `request_state` JSON commands
+- accepts `set_mode`, `set_power`, `set_multi_adjust`, `set_front_panel_controls_disabled`, and `request_state` JSON commands
 - uses slower, retry-heavy sync defaults that are friendlier to Bluetooth RFCOMM links
 
 ## Raspberry Pi Install

@@ -36,7 +36,6 @@ from .const import (
     CONNECTION_MQTT,
     CONNECTION_SERIAL,
     CONTROL_FLAG_DISABLE_KNOBS,
-    CONTROL_FLAG_DISABLE_MULTI_ADJUST,
     REG_EXECUTE_COMMAND,
     REG_BATTERY_PERCENT,
     REG_CHANNEL_A_LEVEL,
@@ -68,6 +67,7 @@ class ET312State:
     mode_options: tuple[str, ...]
     battery_percent: int | None
     multi_adjust: int | None
+    front_panel_controls_disabled: bool
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "ET312State":
@@ -84,6 +84,9 @@ class ET312State:
             mode_options=tuple(str(mode) for mode in modes),
             battery_percent=_optional_int(payload.get("battery_percent")),
             multi_adjust=_optional_int(payload.get("multi_adjust")),
+            front_panel_controls_disabled=bool(
+                payload.get("front_panel_controls_disabled", False)
+            ),
         )
 
 
@@ -430,6 +433,7 @@ class MQTTBridgeTransport(ET312Transport):
                         mode_options=tuple(MODES[code] for code in sorted(MODES)),
                         battery_percent=None,
                         multi_adjust=None,
+                        front_panel_controls_disabled=False,
                     )
                 else:
                     self._state = ET312State(
@@ -441,6 +445,7 @@ class MQTTBridgeTransport(ET312Transport):
                         mode_options=self._state.mode_options,
                         battery_percent=self._state.battery_percent,
                         multi_adjust=self._state.multi_adjust,
+                        front_panel_controls_disabled=self._state.front_panel_controls_disabled,
                     )
                 self._state_event.set()
 
@@ -511,7 +516,6 @@ class ET312Client:
         self._box_key: int | None = None
         self._cipher_mask: int | None = None
         self._last_cipher_mask: int | None = None
-        self._original_control_flags: int | None = None
         self._current_control_flags: int | None = None
 
     def _build_transport(self, config: ET312ConnectionConfig) -> ET312Transport:
@@ -567,7 +571,6 @@ class ET312Client:
             self._connected = False
             self._box_key = None
             self._cipher_mask = None
-            self._original_control_flags = None
             self._current_control_flags = None
             raise
 
@@ -588,10 +591,12 @@ class ET312Client:
                 REG_CHANNEL_B_LEVEL,
                 REG_BATTERY_PERCENT,
                 REG_MULTI_ADJUST_VALUE,
+                REG_CONTROL_FLAGS,
             ]
         )
 
         mode_code = registers[REG_CURRENT_MODE]
+        self._current_control_flags = registers[REG_CONTROL_FLAGS]
         return ET312State(
             connected=True,
             mode_code=mode_code,
@@ -601,15 +606,14 @@ class ET312Client:
             mode_options=tuple(MODES[code] for code in sorted(MODES)),
             battery_percent=raw_byte_to_ui_99(registers[REG_BATTERY_PERCENT]),
             multi_adjust=raw_byte_to_ui_99(registers[REG_MULTI_ADJUST_VALUE]),
+            front_panel_controls_disabled=bool(
+                registers[REG_CONTROL_FLAGS] & CONTROL_FLAG_DISABLE_KNOBS
+            ),
         )
 
     async def async_disconnect(self) -> None:
         """Disconnect from the device."""
         if self._connected and self.config.connection_type == CONNECTION_SERIAL:
-            try:
-                await self._async_restore_control_flags()
-            except ET312ConnectionError:
-                pass
             try:
                 await self.async_reset_key()
             except ET312ConnectionError:
@@ -618,7 +622,6 @@ class ET312Client:
         self._connected = False
         self._box_key = None
         self._cipher_mask = None
-        self._original_control_flags = None
         self._current_control_flags = None
 
     async def async_read_register(self, address: int) -> int:
@@ -643,37 +646,38 @@ class ET312Client:
         return result
 
     async def _async_get_control_flags(self) -> int:
-        """Return the current ET312 control flags, caching the original state."""
+        """Return the current ET312 control flags."""
         if self._current_control_flags is not None:
             return self._current_control_flags
 
         flags = await self.async_read_register(REG_CONTROL_FLAGS)
-        if self._original_control_flags is None:
-            self._original_control_flags = flags
         self._current_control_flags = flags
         return flags
 
-    async def _async_ensure_control_flags(self, required_mask: int) -> None:
-        """Enable the control-flag bits needed for software control."""
+    async def _async_set_control_flags(self, desired_flags: int) -> None:
+        """Write ET312 control flags when the value changes."""
         current_flags = await self._async_get_control_flags()
-        desired_flags = current_flags | required_mask
         if desired_flags == current_flags:
             return
 
         await self.async_write_register(REG_CONTROL_FLAGS, [desired_flags])
         self._current_control_flags = desired_flags
 
-    async def _async_restore_control_flags(self) -> None:
-        """Restore the ET312 control flags we found before taking software control."""
-        if (
-            self._original_control_flags is None
-            or self._current_control_flags is None
-            or self._current_control_flags == self._original_control_flags
-        ):
+    async def async_set_front_panel_controls_disabled(self, disabled: bool) -> None:
+        """Enable or disable the ET312 front-panel knobs."""
+        if self.config.connection_type == CONNECTION_MQTT:
+            await self.transport.async_publish_command(
+                {"command": "set_front_panel_controls_disabled", "value": disabled}
+            )
             return
 
-        await self.async_write_register(REG_CONTROL_FLAGS, [self._original_control_flags])
-        self._current_control_flags = self._original_control_flags
+        current_flags = await self._async_get_control_flags()
+        if disabled:
+            desired_flags = current_flags | CONTROL_FLAG_DISABLE_KNOBS
+        else:
+            desired_flags = current_flags & ~CONTROL_FLAG_DISABLE_KNOBS
+
+        await self._async_set_control_flags(desired_flags)
 
     async def async_reset_key(self) -> None:
         """Reset the device cipher key if we negotiated one."""
@@ -718,7 +722,8 @@ class ET312Client:
         else:
             raise ET312ConnectionError(f"Unknown ET312 channel: {channel}")
 
-        await self._async_ensure_control_flags(CONTROL_FLAG_DISABLE_KNOBS)
+        current_flags = await self._async_get_control_flags()
+        await self._async_set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         await self.async_write_register(level_register, [ui_99_to_raw_byte(level)])
 
     async def async_set_multi_adjust(self, value: int) -> None:
@@ -734,9 +739,8 @@ class ET312Client:
             )
             return
 
-        await self._async_ensure_control_flags(
-            CONTROL_FLAG_DISABLE_KNOBS | CONTROL_FLAG_DISABLE_MULTI_ADJUST
-        )
+        current_flags = await self._async_get_control_flags()
+        await self._async_set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         await self.async_write_register(
             REG_MULTI_ADJUST_VALUE,
             [ui_99_to_raw_byte(value)],

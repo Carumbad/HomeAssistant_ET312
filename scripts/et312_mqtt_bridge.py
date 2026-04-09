@@ -17,7 +17,6 @@ if str(REPO_ROOT) not in sys.path:
 
 from custom_components.et312.const import (
     CONTROL_FLAG_DISABLE_KNOBS,
-    CONTROL_FLAG_DISABLE_MULTI_ADJUST,
     MODES,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
@@ -115,7 +114,6 @@ class Bridge:
         self.box_key: int | None = None
         self.cipher_mask: int | None = None
         self.last_cipher_mask: int | None = None
-        self.original_control_flags: int | None = None
         self.current_control_flags: int | None = None
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if args.username:
@@ -173,7 +171,6 @@ class Bridge:
             self._close_serial()
             self.box_key = None
             self.cipher_mask = None
-            self.original_control_flags = None
             self.current_control_flags = None
             try:
                 self._log(
@@ -286,10 +283,6 @@ class Bridge:
         """Close the bridge cleanly."""
         try:
             if self.cipher_mask is not None:
-                try:
-                    self._restore_control_flags()
-                except RuntimeError as err:
-                    self._log(f"Unable to restore control flags before shutdown: {err}")
                 self._write_register(0x4213, [0x00])
         finally:
             self.mqtt.publish(self.args.availability_topic, "offline", retain=True)
@@ -316,6 +309,8 @@ class Bridge:
             self._set_power(str(payload["channel"]), int(payload["value"]))
         elif command == "set_multi_adjust":
             self._set_multi_adjust(int(payload["value"]))
+        elif command == "set_front_panel_controls_disabled":
+            self._set_front_panel_controls_disabled(bool(payload["value"]))
         elif command == "request_state":
             pass
         else:
@@ -340,37 +335,31 @@ class Bridge:
             raise RuntimeError(f"Unexpected ET312 write ack for 0x{address:04X}: {ack!r}")
 
     def _get_control_flags(self) -> int:
-        """Return current control flags, caching the original device state."""
+        """Return current control flags."""
         if self.current_control_flags is not None:
             return self.current_control_flags
 
         flags = self._read_register(REG_CONTROL_FLAGS)
-        if self.original_control_flags is None:
-            self.original_control_flags = flags
         self.current_control_flags = flags
         return flags
 
-    def _ensure_control_flags(self, required_mask: int) -> None:
-        """Enable the ET312 control-flag bits needed for software control."""
+    def _set_control_flags(self, desired_flags: int) -> None:
+        """Write ET312 control flags when the value changes."""
         current_flags = self._get_control_flags()
-        desired_flags = current_flags | required_mask
         if desired_flags == current_flags:
             return
 
         self._write_register(REG_CONTROL_FLAGS, [desired_flags])
         self.current_control_flags = desired_flags
 
-    def _restore_control_flags(self) -> None:
-        """Restore the ET312 control flags seen before software control writes."""
-        if (
-            self.original_control_flags is None
-            or self.current_control_flags is None
-            or self.current_control_flags == self.original_control_flags
-        ):
-            return
-
-        self._write_register(REG_CONTROL_FLAGS, [self.original_control_flags])
-        self.current_control_flags = self.original_control_flags
+    def _set_front_panel_controls_disabled(self, disabled: bool) -> None:
+        """Enable or disable the ET312 front-panel knobs."""
+        current_flags = self._get_control_flags()
+        if disabled:
+            desired_flags = current_flags | CONTROL_FLAG_DISABLE_KNOBS
+        else:
+            desired_flags = current_flags & ~CONTROL_FLAG_DISABLE_KNOBS
+        self._set_control_flags(desired_flags)
 
     def _set_mode(self, mode_name: str) -> None:
         for code, name in MODES.items():
@@ -391,20 +380,22 @@ class Bridge:
         else:
             raise RuntimeError(f"Unsupported ET312 channel: {channel}")
 
-        self._ensure_control_flags(CONTROL_FLAG_DISABLE_KNOBS)
+        current_flags = self._get_control_flags()
+        self._set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         self._write_register(level_register, [ui_99_to_raw_byte(value)])
 
     def _set_multi_adjust(self, value: int) -> None:
         if not 0 <= value <= 99:
             raise RuntimeError(f"Unsupported ET312 multi-adjust value: {value}")
-        self._ensure_control_flags(
-            CONTROL_FLAG_DISABLE_KNOBS | CONTROL_FLAG_DISABLE_MULTI_ADJUST
-        )
+        current_flags = self._get_control_flags()
+        self._set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         self._write_register(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(value)])
 
     def publish_state(self) -> None:
         """Publish the current ET312 state as retained JSON."""
         mode_code = self._read_register(0x407B)
+        control_flags = self._read_register(REG_CONTROL_FLAGS)
+        self.current_control_flags = control_flags
         payload = {
             "connected": True,
             "mode_code": mode_code,
@@ -413,6 +404,7 @@ class Bridge:
             "power_level_b": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_B_LEVEL)),
             "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
             "multi_adjust": raw_byte_to_ui_99(self._read_register(REG_MULTI_ADJUST_VALUE)),
+            "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
             "available_modes": [MODES[code] for code in sorted(MODES)],
         }
         publish_info = self.mqtt.publish(
