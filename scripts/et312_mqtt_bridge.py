@@ -110,6 +110,19 @@ class Bridge:
             dsrdtr=False,
         )
 
+    def _reset_serial_buffers(self) -> None:
+        """Best-effort serial buffer reset.
+
+        RFCOMM-backed tty devices can throw low-level I/O errors here after a
+        failed attempt. Treat that as a reconnect condition, not a fatal crash.
+        """
+        assert self.serial_port is not None
+        try:
+            self.serial_port.reset_input_buffer()
+            self.serial_port.reset_output_buffer()
+        except (serial.SerialException, OSError) as err:
+            raise RuntimeError(f"serial buffer reset failed: {err}") from err
+
     def _close_serial(self) -> None:
         """Close the serial device if it is open."""
         if self.serial_port is None:
@@ -136,8 +149,7 @@ class Bridge:
                 if self.args.startup_delay:
                     self._log(f"Waiting {self.args.startup_delay:.2f}s for serial link to settle")
                     time.sleep(self.args.startup_delay)
-                self.serial_port.reset_input_buffer()
-                self.serial_port.reset_output_buffer()
+                self._reset_serial_buffers()
                 self._log(
                     f"Trying sync with {self.args.sync_attempts} attempts, "
                     f"read timeout {self.args.sync_read_timeout:.2f}s"
