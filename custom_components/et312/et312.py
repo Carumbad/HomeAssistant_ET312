@@ -728,11 +728,17 @@ class ET312Client:
                 )
                 await self.transport.async_flush_input()
                 await self.async_sync()
-                await self.async_setup_keys()
+                try:
+                    await self.async_setup_keys()
+                except ET312ConnectionError:
+                    self._box_key = 0x00
+                    self._cipher_mask = build_cipher_mask(self._host_key, self._box_key)
+                    self._last_cipher_mask = self._cipher_mask
                 return
-            raise ET312ConnectionError(
-                "Timeout during ET312 key setup; the device may need reconnecting"
-            ) from None
+            self._box_key = 0x00
+            self._cipher_mask = build_cipher_mask(self._host_key, self._box_key)
+            self._last_cipher_mask = self._cipher_mask
+            return
 
         if calculate_checksum(response[:-1]) != response[-1]:
             raise ET312ConnectionError("ET312 key setup checksum mismatch")

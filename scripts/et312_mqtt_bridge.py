@@ -229,12 +229,33 @@ class Bridge:
                         )
                         if self.args.post_sync_delay:
                             time.sleep(self.args.post_sync_delay)
-                        self.box_key = blocking_setup_key(
-                            self.serial_port,
-                            timeout=self.args.key_exchange_timeout,
-                        )
+                        try:
+                            self.box_key = blocking_setup_key(
+                                self.serial_port,
+                                timeout=self.args.key_exchange_timeout,
+                            )
+                        except RuntimeError:
+                            self.box_key = 0x00
+                            self.cipher_mask = build_cipher_mask(
+                                self.host_key,
+                                self.box_key,
+                            )
+                            self.last_cipher_mask = self.cipher_mask
+                            self._log(
+                                "Key exchange still timed out after encrypted sync; "
+                                "assuming ET312 box key 0x00"
+                            )
                     else:
-                        raise
+                        self.box_key = 0x00
+                        self.cipher_mask = build_cipher_mask(
+                            self.host_key,
+                            self.box_key,
+                        )
+                        self.last_cipher_mask = self.cipher_mask
+                        self._log(
+                            "Key exchange timed out with encrypted transport; "
+                            "assuming ET312 box key 0x00"
+                        )
                 self.cipher_mask = build_cipher_mask(self.host_key, self.box_key)
                 self.last_cipher_mask = self.cipher_mask
                 self._log(

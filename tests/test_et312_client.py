@@ -19,6 +19,7 @@ from custom_components.et312.et312 import (
     ET312Client,
     ET312ConnectionConfig,
     ET312ConnectionError,
+    ET312TimeoutError,
     build_cipher_mask,
     flip_nibbles,
     raw_power_to_ui,
@@ -127,3 +128,21 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
 
         with self.assertRaises(ET312ConnectionError):
             await client.async_set_channel_power("a", 100)
+
+    async def test_key_setup_timeout_falls_back_to_box_key_zero(self) -> None:
+        """Bluetooth sessions should tolerate missing key exchange replies."""
+        client = self._make_client()
+        client.transport.async_write = AsyncMock()
+        client.transport.async_flush_input = AsyncMock()
+        client.transport.async_read = AsyncMock(
+            side_effect=[
+                ET312TimeoutError("first key exchange timeout"),
+                b"\x07",
+                ET312TimeoutError("second key exchange timeout"),
+            ]
+        )
+
+        await client.async_setup_keys()
+
+        self.assertEqual(client._box_key, 0x00)
+        self.assertEqual(client._cipher_mask, build_cipher_mask(0x00, 0x00))
