@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -116,6 +117,7 @@ class Bridge:
         self.cipher_mask: int | None = None
         self.last_cipher_mask: int | None = None
         self.current_control_flags: int | None = None
+        self._serial_lock = threading.RLock()
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if args.username:
             self.mqtt.username_pw_set(args.username, args.password)
@@ -302,38 +304,45 @@ class Bridge:
 
     def _on_message(self, client, userdata, msg) -> None:
         """Handle Home Assistant commands."""
-        payload = json.loads(msg.payload.decode("utf-8"))
-        command = payload["command"]
-        if command == "set_mode":
-            self._set_mode(str(payload["mode"]))
-        elif command == "set_power":
-            self._set_power(str(payload["channel"]), int(payload["value"]))
-        elif command == "set_multi_adjust":
-            self._set_multi_adjust(int(payload["value"]))
-        elif command == "set_front_panel_controls_disabled":
-            self._set_front_panel_controls_disabled(bool(payload["value"]))
-        elif command == "request_state":
-            pass
-        else:
-            raise RuntimeError(f"Unsupported ET312 bridge command: {command}")
-        self.publish_state()
+        try:
+            payload = json.loads(msg.payload.decode("utf-8"))
+            command = payload["command"]
+            self._log(f"Received command on {msg.topic}: {payload}")
+            with self._serial_lock:
+                if command == "set_mode":
+                    self._set_mode(str(payload["mode"]))
+                elif command == "set_power":
+                    self._set_power(str(payload["channel"]), int(payload["value"]))
+                elif command == "set_multi_adjust":
+                    self._set_multi_adjust(int(payload["value"]))
+                elif command == "set_front_panel_controls_disabled":
+                    self._set_front_panel_controls_disabled(bool(payload["value"]))
+                elif command == "request_state":
+                    pass
+                else:
+                    raise RuntimeError(f"Unsupported ET312 bridge command: {command}")
+                self.publish_state()
+        except Exception as err:
+            self._log(f"Command handling failed: {err}")
 
     def _read_register(self, address: int) -> int:
-        payload = build_read_command(address)
-        assert self.serial_port is not None
-        self.serial_port.write(bytes(apply_cipher(payload, self.cipher_mask)))
-        response = list(self.serial_port.read(3))
-        if len(response) != 3:
-            raise RuntimeError(f"Timed out reading ET312 register 0x{address:04X}")
-        return decode_read_response(response)
+        with self._serial_lock:
+            payload = build_read_command(address)
+            assert self.serial_port is not None
+            self.serial_port.write(bytes(apply_cipher(payload, self.cipher_mask)))
+            response = list(self.serial_port.read(3))
+            if len(response) != 3:
+                raise RuntimeError(f"Timed out reading ET312 register 0x{address:04X}")
+            return decode_read_response(response)
 
     def _write_register(self, address: int, values: list[int]) -> None:
-        payload = build_write_command(address, values)
-        assert self.serial_port is not None
-        self.serial_port.write(bytes(apply_cipher(payload, self.cipher_mask)))
-        ack = self.serial_port.read(1)
-        if ack != b"\x06":
-            raise RuntimeError(f"Unexpected ET312 write ack for 0x{address:04X}: {ack!r}")
+        with self._serial_lock:
+            payload = build_write_command(address, values)
+            assert self.serial_port is not None
+            self.serial_port.write(bytes(apply_cipher(payload, self.cipher_mask)))
+            ack = self.serial_port.read(1)
+            if ack != b"\x06":
+                raise RuntimeError(f"Unexpected ET312 write ack for 0x{address:04X}: {ack!r}")
 
     def _get_control_flags(self) -> int:
         """Return current control flags."""
@@ -394,20 +403,21 @@ class Bridge:
 
     def publish_state(self) -> None:
         """Publish the current ET312 state as retained JSON."""
-        mode_code = self._read_register(0x407B)
-        control_flags = self._read_register(REG_CONTROL_FLAGS)
-        self.current_control_flags = control_flags
-        payload = {
-            "connected": True,
-            "mode_code": mode_code,
-            "mode": MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
-            "power_level_a": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_A_LEVEL)),
-            "power_level_b": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_B_LEVEL)),
-            "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
-            "multi_adjust": raw_byte_to_ui_99(self._read_register(REG_MULTI_ADJUST_VALUE)),
-            "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
-            "available_modes": [ROUTINES[code] for code in sorted(ROUTINES)],
-        }
+        with self._serial_lock:
+            mode_code = self._read_register(0x407B)
+            control_flags = self._read_register(REG_CONTROL_FLAGS)
+            self.current_control_flags = control_flags
+            payload = {
+                "connected": True,
+                "mode_code": mode_code,
+                "mode": MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
+                "power_level_a": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_A_LEVEL)),
+                "power_level_b": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_B_LEVEL)),
+                "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
+                "multi_adjust": raw_byte_to_ui_99(self._read_register(REG_MULTI_ADJUST_VALUE)),
+                "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
+                "available_modes": [ROUTINES[code] for code in sorted(ROUTINES)],
+            }
         publish_info = self.mqtt.publish(
             self.args.state_topic,
             json.dumps(payload),
