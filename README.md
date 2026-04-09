@@ -1,6 +1,10 @@
 # Home Assistant ET312 Integration
 
-Custom Home Assistant integration scaffold for the ErosTek ET312.
+This is a combination of two things;
+1) A piece of python code which will run on a Raspberry Pi, connect to an ET312 via serial and an MQTT server via TCP/IP. It will publish status to the MQTT server and optionally consume messages from the MQTT server and control the ET312.
+2) A Home Asssistant module that can be installed via HACS into Home Assistant and control the ET312, via the MQTT as a go-between (so the Home Assistant server and the Raspberry Pi/ET312 can be far apart.
+
+I totally just vibe coded the crap out of this with ChatGPT and Codex, so don't blame me if it zaps you in the balls or does something else weird, it seemed to work for me, YMMV.
 
 ## Current status
 
