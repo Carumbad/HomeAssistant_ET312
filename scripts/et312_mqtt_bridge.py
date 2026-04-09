@@ -39,7 +39,12 @@ def blocking_sync(
     """Synchronize the ET312 serial stream."""
     payload = bytes(apply_cipher([0x00], key))
     original_timeout = port.timeout
-    port.timeout = read_timeout
+    timeout_changed = False
+    try:
+        port.timeout = read_timeout
+        timeout_changed = True
+    except (serial.SerialException, OSError, ValueError):
+        pass
     try:
         for _ in range(attempts):
             port.write(payload)
@@ -53,17 +58,23 @@ def blocking_sync(
             if inter_attempt_delay:
                 time.sleep(inter_attempt_delay)
     finally:
-        try:
-            port.timeout = original_timeout
-        except (serial.SerialException, OSError):
-            pass
+        if timeout_changed:
+            try:
+                port.timeout = original_timeout
+            except (serial.SerialException, OSError, ValueError):
+                pass
     raise RuntimeError("ET312 sync failed")
 
 
 def blocking_setup_key(port, *, timeout: float) -> int:
     """Negotiate the ET312 key."""
     original_timeout = port.timeout
-    port.timeout = timeout
+    timeout_changed = False
+    try:
+        port.timeout = timeout
+        timeout_changed = True
+    except (serial.SerialException, OSError, ValueError):
+        pass
     try:
         command = [0x2F, 0x00]
         payload = command + [calculate_checksum(command)]
@@ -78,10 +89,11 @@ def blocking_setup_key(port, *, timeout: float) -> int:
             raise RuntimeError(f"Unexpected ET312 key exchange response: {response!r}")
         return response[1]
     finally:
-        try:
-            port.timeout = original_timeout
-        except (serial.SerialException, OSError):
-            pass
+        if timeout_changed:
+            try:
+                port.timeout = original_timeout
+            except (serial.SerialException, OSError, ValueError):
+                pass
 
 
 class Bridge:
