@@ -30,4 +30,4 @@ if [[ ! "${RFCOMM_ID}" =~ ^[0-9]+$ ]]; then
 fi
 
 rfcomm release "${RFCOMM_ID}" >/dev/null 2>&1 || true
-exec rfcomm bind "${RFCOMM_ID}" "${ET312_BLUETOOTH_MAC}" "${RFCOMM_CHANNEL}"
+exec rfcomm connect "${RFCOMM_ID}" "${ET312_BLUETOOTH_MAC}" "${RFCOMM_CHANNEL}"

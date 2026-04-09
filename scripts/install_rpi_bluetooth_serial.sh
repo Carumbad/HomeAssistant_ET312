@@ -172,8 +172,9 @@ After=bluetooth.service network.target
 Requires=bluetooth.service
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
+Restart=always
+RestartSec=2
 ExecStart=${INSTALL_DIR}/scripts/run_et312_rfcomm.sh ${CONFIG_FILE}
 ExecStop=${INSTALL_DIR}/scripts/release_et312_rfcomm.sh ${CONFIG_FILE}
 
