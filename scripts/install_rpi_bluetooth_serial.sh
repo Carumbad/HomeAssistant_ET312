@@ -6,6 +6,7 @@ SERVICE_NAME="et312-rfcomm"
 INSTALL_DIR="/opt/et312-mqtt-bridge"
 CONFIG_FILE="${INSTALL_DIR}/config/${SERVICE_NAME}.env"
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
+BRIDGE_SERVICE_USER="et312"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ET312_MAC=""
@@ -145,7 +146,13 @@ EOF
 }
 
 write_config() {
-  install -m 0750 -o root -g root -d "$(dirname "${CONFIG_FILE}")"
+  local config_group="root"
+
+  if getent group "${BRIDGE_SERVICE_USER}" >/dev/null 2>&1; then
+    config_group="${BRIDGE_SERVICE_USER}"
+  fi
+
+  install -m 0750 -o root -g "${config_group}" -d "$(dirname "${CONFIG_FILE}")"
 
   cat > "${CONFIG_FILE}" <<EOF
 ET312_BLUETOOTH_MAC="${ET312_MAC}"
@@ -153,6 +160,7 @@ RFCOMM_DEVICE="${RFCOMM_DEVICE}"
 RFCOMM_CHANNEL="${RFCOMM_CHANNEL}"
 EOF
 
+  chown root:"${config_group}" "${CONFIG_FILE}"
   chmod 0644 "${CONFIG_FILE}"
 }
 
