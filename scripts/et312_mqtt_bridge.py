@@ -212,15 +212,25 @@ class Bridge:
                         timeout=self.args.key_exchange_timeout,
                     )
                 except RuntimeError:
+                    self._log(
+                        "Key exchange timed out; resyncing before assuming ET312 box key 0x00"
+                    )
+                    self.cipher_mask = None
+                    self._reset_serial_buffers()
+                    blocking_sync(
+                        self.serial_port,
+                        None,
+                        attempts=self.args.sync_attempts,
+                        read_timeout=self.args.sync_read_timeout,
+                        inter_attempt_delay=self.args.sync_inter_attempt_delay,
+                    )
                     self.box_key = 0x00
                     self.cipher_mask = build_cipher_mask(
                         self.host_key,
                         self.box_key,
                     )
                     self.last_cipher_mask = self.cipher_mask
-                    self._log(
-                        "Key exchange timed out; assuming ET312 box key 0x00"
-                    )
+                    self._log("Assuming ET312 box key 0x00")
                 self.cipher_mask = build_cipher_mask(self.host_key, self.box_key)
                 self.last_cipher_mask = self.cipher_mask
                 self._log(
