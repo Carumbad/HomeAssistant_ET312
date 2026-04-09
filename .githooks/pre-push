@@ -1,0 +1,48 @@
+#!/bin/sh
+
+set -eu
+
+EXPECTED_NAME="Carumbad"
+EXPECTED_EMAIL="Carumbad@hotmail.com"
+
+current_name="$(git config --get user.name || true)"
+current_email="$(git config --get user.email || true)"
+
+if [ "$current_name" != "$EXPECTED_NAME" ] || [ "$current_email" != "$EXPECTED_EMAIL" ]; then
+  echo "Push blocked: this repo must use $EXPECTED_NAME <$EXPECTED_EMAIL>." >&2
+  echo "Current git config is ${current_name:-<unset>} <${current_email:-unset}>." >&2
+  exit 1
+fi
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_ref:-}" ] || continue
+
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    commit_range="$local_sha --not --remotes"
+  else
+    commit_range="$remote_sha..$local_sha"
+  fi
+
+  for commit in $(git rev-list $commit_range); do
+    author_name="$(git show -s --format=%an "$commit")"
+    author_email="$(git show -s --format=%ae "$commit")"
+    committer_name="$(git show -s --format=%cn "$commit")"
+    committer_email="$(git show -s --format=%ce "$commit")"
+
+    if [ "$author_name" != "$EXPECTED_NAME" ] || [ "$author_email" != "$EXPECTED_EMAIL" ]; then
+      echo "Push blocked: commit $commit has author $author_name <$author_email>." >&2
+      exit 1
+    fi
+
+    if [ "$committer_name" != "$EXPECTED_NAME" ] || [ "$committer_email" != "$EXPECTED_EMAIL" ]; then
+      echo "Push blocked: commit $commit has committer $committer_name <$committer_email>." >&2
+      exit 1
+    fi
+  done
+done
+
+exit 0
