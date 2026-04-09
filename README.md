@@ -135,3 +135,69 @@ The bridge:
 - publishes retained JSON state to the configured MQTT state topic
 - publishes `online` and `offline` to the availability topic
 - accepts `set_mode`, `set_power`, and `request_state` JSON commands
+
+## Raspberry Pi Install
+
+A Raspberry Pi 4 running Raspberry Pi OS is a sensible host for the MQTT bridge.
+The bridge is lightweight, and the Pi gives you a stable always-on serial and
+MQTT endpoint near the ET312.
+
+From a fresh Raspberry Pi OS install:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+git clone https://github.com/Carumbad/HomeAssistant_ET312.git
+cd HomeAssistant_ET312
+sudo ./scripts/install_rpi_bridge.sh --device /dev/ttyUSB0 --mqtt-host 192.168.1.20
+```
+
+The installer:
+
+- installs Python and bridge dependencies
+- copies this project into `/opt/et312-mqtt-bridge`
+- creates an `et312` system user
+- grants that user access to `dialout`
+- writes bridge settings to `/etc/default/et312-mqtt-bridge`
+- installs and starts a `systemd` service
+
+After install, useful commands are:
+
+```bash
+sudo systemctl status et312-mqtt-bridge
+sudo journalctl -u et312-mqtt-bridge -f
+sudo editor /etc/default/et312-mqtt-bridge
+sudo systemctl restart et312-mqtt-bridge
+```
+
+## Raspberry Pi Bluetooth Serial Setup
+
+If the ET312 will connect to the Pi over Bluetooth instead of USB serial, there
+is a separate helper script for the Bluetooth stack and RFCOMM mapping:
+
+```bash
+sudo ./scripts/install_rpi_bluetooth_serial.sh --mac AA:BB:CC:DD:EE:FF
+```
+
+That script:
+
+- installs the BlueZ Bluetooth stack
+- enables the Pi Bluetooth service
+- pairs, trusts, and connects to the ET312 with `bluetoothctl`
+- creates a persistent `rfcomm` mapping service
+- exposes the ET312 as a serial device such as `/dev/rfcomm0`
+
+Useful Bluetooth commands afterward:
+
+```bash
+sudo systemctl status et312-rfcomm
+sudo journalctl -u et312-rfcomm -f
+sudo rfcomm
+ls -l /dev/rfcomm0
+```
+
+Once `/dev/rfcomm0` is working, you can use it with the bridge installer:
+
+```bash
+sudo ./scripts/install_rpi_bridge.sh --device /dev/rfcomm0 --mqtt-host 192.168.1.20
+```
