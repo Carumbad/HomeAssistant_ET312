@@ -212,50 +212,15 @@ class Bridge:
                         timeout=self.args.key_exchange_timeout,
                     )
                 except RuntimeError:
-                    if self.cipher_mask is None:
-                        self.cipher_mask = self.last_cipher_mask or build_cipher_mask(
-                            self.host_key, 0x00
-                        )
-                        self._log(
-                            "Key exchange timed out after raw sync; retrying with encrypted sync"
-                        )
-                        self._reset_serial_buffers()
-                        blocking_sync(
-                            self.serial_port,
-                            self.cipher_mask,
-                            attempts=self.args.sync_attempts,
-                            read_timeout=self.args.sync_read_timeout,
-                            inter_attempt_delay=self.args.sync_inter_attempt_delay,
-                        )
-                        if self.args.post_sync_delay:
-                            time.sleep(self.args.post_sync_delay)
-                        try:
-                            self.box_key = blocking_setup_key(
-                                self.serial_port,
-                                timeout=self.args.key_exchange_timeout,
-                            )
-                        except RuntimeError:
-                            self.box_key = 0x00
-                            self.cipher_mask = build_cipher_mask(
-                                self.host_key,
-                                self.box_key,
-                            )
-                            self.last_cipher_mask = self.cipher_mask
-                            self._log(
-                                "Key exchange still timed out after encrypted sync; "
-                                "assuming ET312 box key 0x00"
-                            )
-                    else:
-                        self.box_key = 0x00
-                        self.cipher_mask = build_cipher_mask(
-                            self.host_key,
-                            self.box_key,
-                        )
-                        self.last_cipher_mask = self.cipher_mask
-                        self._log(
-                            "Key exchange timed out with encrypted transport; "
-                            "assuming ET312 box key 0x00"
-                        )
+                    self.box_key = 0x00
+                    self.cipher_mask = build_cipher_mask(
+                        self.host_key,
+                        self.box_key,
+                    )
+                    self.last_cipher_mask = self.cipher_mask
+                    self._log(
+                        "Key exchange timed out; assuming ET312 box key 0x00"
+                    )
                 self.cipher_mask = build_cipher_mask(self.host_key, self.box_key)
                 self.last_cipher_mask = self.cipher_mask
                 self._log(

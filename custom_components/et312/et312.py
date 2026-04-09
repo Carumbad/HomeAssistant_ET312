@@ -722,19 +722,6 @@ class ET312Client:
             await self.transport.async_write(bytes(apply_cipher(payload, self._cipher_mask)))
             response = list(await self.transport.async_read(3, timeout=1.0))
         except ET312TimeoutError:
-            if self._cipher_mask is None:
-                self._cipher_mask = self._last_cipher_mask or build_cipher_mask(
-                    self._host_key, 0x00
-                )
-                await self.transport.async_flush_input()
-                await self.async_sync()
-                try:
-                    await self.async_setup_keys()
-                except ET312ConnectionError:
-                    self._box_key = 0x00
-                    self._cipher_mask = build_cipher_mask(self._host_key, self._box_key)
-                    self._last_cipher_mask = self._cipher_mask
-                return
             self._box_key = 0x00
             self._cipher_mask = build_cipher_mask(self._host_key, self._box_key)
             self._last_cipher_mask = self._cipher_mask
