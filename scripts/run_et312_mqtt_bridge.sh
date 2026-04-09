@@ -19,9 +19,32 @@ source "${CONFIG_FILE}"
 set +a
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PYTHON_BIN="${SCRIPT_DIR}/../.venv/bin/python"
 EFFECTIVE_STARTUP_DELAY="${STARTUP_DELAY:-1.5}"
 EFFECTIVE_CONNECT_RETRIES="${CONNECT_RETRIES:-4}"
 EFFECTIVE_RECONNECT_DELAY="${RECONNECT_DELAY:-2.0}"
+
+publish_offline() {
+  if [[ -z "${MQTT_HOST:-}" || -z "${AVAILABILITY_TOPIC:-}" ]]; then
+    return
+  fi
+
+  "${PYTHON_BIN}" - <<'PY' >/dev/null 2>&1 || true
+import os
+import paho.mqtt.client as mqtt
+
+client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
+username = os.environ.get("MQTT_USERNAME")
+password = os.environ.get("MQTT_PASSWORD")
+if username:
+    client.username_pw_set(username, password)
+
+client.connect(os.environ["MQTT_HOST"], int(os.environ.get("MQTT_PORT", "1883")), 60)
+info = client.publish(os.environ["AVAILABILITY_TOPIC"], "offline", retain=True)
+info.wait_for_publish()
+client.disconnect()
+PY
+}
 
 if [[ "${DEVICE}" == /dev/rfcomm* ]]; then
   if awk "BEGIN { exit !(${EFFECTIVE_STARTUP_DELAY} < 2.0) }"; then
@@ -46,6 +69,7 @@ done
 
 if [[ ! -e "${DEVICE}" ]]; then
   echo "Serial device not found: ${DEVICE}" >&2
+  publish_offline
   exit 1
 fi
 
@@ -78,4 +102,8 @@ if [[ -n "${MQTT_PASSWORD:-}" ]]; then
   ARGS+=(--password "${MQTT_PASSWORD}")
 fi
 
-exec "${SCRIPT_DIR}/../.venv/bin/python" "${ARGS[@]}"
+"${PYTHON_BIN}" "${ARGS[@]}"
+EXIT_CODE=$?
+
+publish_offline
+exit "${EXIT_CODE}"

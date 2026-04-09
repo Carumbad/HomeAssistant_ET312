@@ -15,6 +15,14 @@ class ET312CoordinatorEntity(CoordinatorEntity[ET312DataUpdateCoordinator]):
     _attr_has_entity_name = True
 
     @property
+    def available(self) -> bool:
+        """Return whether the ET312 is currently available."""
+        if not super().available:
+            return False
+        data = self.coordinator.data
+        return data is not None and data.connected
+
+    @property
     def device_info(self) -> DeviceInfo:
         """Return device information for the ET312."""
         return DeviceInfo(
