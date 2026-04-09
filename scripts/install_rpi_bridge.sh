@@ -205,9 +205,14 @@ install_app_files() {
     --exclude '.DS_Store' \
     "${REPO_ROOT}/" "${INSTALL_DIR}/"
 
-  python3 -m venv "${INSTALL_DIR}/.venv"
-  "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip
-  "${INSTALL_DIR}/.venv/bin/pip" install pyserial paho-mqtt
+  if [[ ! -x "${INSTALL_DIR}/.venv/bin/python" ]]; then
+    python3 -m venv "${INSTALL_DIR}/.venv"
+  fi
+
+  if ! "${INSTALL_DIR}/.venv/bin/python" -c 'import paho.mqtt.client, serial' >/dev/null 2>&1; then
+    "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip
+    "${INSTALL_DIR}/.venv/bin/pip" install pyserial paho-mqtt
+  fi
 
   chmod 0755 "${INSTALL_DIR}/scripts/install_rpi_bridge.sh"
   chmod 0755 "${INSTALL_DIR}/scripts/run_et312_mqtt_bridge.sh"

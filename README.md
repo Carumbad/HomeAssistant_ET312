@@ -162,6 +162,9 @@ The installer:
 - writes bridge settings to `/opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env`
 - installs and starts a `systemd` service
 
+If you rerun the bridge installer, it reuses the existing virtualenv and only
+downloads Python packages when `pyserial` or `paho-mqtt` are missing.
+
 After install, useful commands are:
 
 ```bash
