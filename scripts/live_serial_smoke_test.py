@@ -22,6 +22,7 @@ from custom_components.et312.et312 import (
     calculate_checksum,
     decode_read_response,
     raw_byte_to_ui_99,
+    raw_level_byte_to_ui_99,
 )
 
 
@@ -109,8 +110,8 @@ def _run_blocking_read_only(device: str, baudrate: int, timeout: float) -> None:
         print(
             "State:"
             f" mode_code=0x{mode_code:02X},"
-            f" power_level_a={raw_byte_to_ui_99(level_a)},"
-            f" power_level_b={raw_byte_to_ui_99(level_b)},"
+            f" power_level_a={raw_level_byte_to_ui_99(level_a)},"
+            f" power_level_b={raw_level_byte_to_ui_99(level_b)},"
             f" battery_percent={raw_byte_to_ui_99(battery)},"
             f" multi_adjust={raw_byte_to_ui_99(ma)}"
         )

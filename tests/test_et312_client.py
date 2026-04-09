@@ -22,6 +22,7 @@ from custom_components.et312.et312 import (
     ET312TimeoutError,
     build_cipher_mask,
     flip_nibbles,
+    raw_level_byte_to_ui_99,
     raw_power_to_ui,
     ui_power_to_raw,
 )
@@ -54,6 +55,12 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         """UI power values should round-trip closely through the raw mapping."""
         for value in (0, 1, 25, 50, 75, 98, 99):
             self.assertLessEqual(abs(raw_power_to_ui(ui_power_to_raw(value)) - value), 1)
+
+    def test_live_level_scale_matches_front_panel_truncation(self) -> None:
+        """Live A/B level registers should truncate the 0-255 byte to 0-99 like the ET312 UI."""
+        self.assertEqual(raw_level_byte_to_ui_99(0x00), 0)
+        self.assertEqual(raw_level_byte_to_ui_99(0x1C), 10)
+        self.assertEqual(raw_level_byte_to_ui_99(0xFF), 99)
 
     def test_flip_nibbles(self) -> None:
         """The ET312 host key uses nibble-flipping before XOR mask derivation."""
@@ -107,7 +114,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         client.async_read_registers = AsyncMock(
             return_value={
                 REG_CURRENT_MODE: 0x76,
-                REG_CHANNEL_A_LEVEL: 0x00,
+                REG_CHANNEL_A_LEVEL: 0x1C,
                 REG_CHANNEL_B_LEVEL: 0xFF,
                 0x4203: 87,
                 0x420D: 55,
@@ -117,7 +124,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         state = await client.async_get_state()
 
         self.assertEqual(state.mode, "Waves")
-        self.assertEqual(state.power_level_a, 0)
+        self.assertEqual(state.power_level_a, 10)
         self.assertEqual(state.power_level_b, 99)
         self.assertEqual(state.battery_percent, 34)
         self.assertEqual(state.multi_adjust, 21)

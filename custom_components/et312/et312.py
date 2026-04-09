@@ -148,6 +148,12 @@ def raw_byte_to_ui_99(raw_value: int) -> int:
     return round((clamped * CHANNEL_POWER_UI_MAX) / 0xFF)
 
 
+def raw_level_byte_to_ui_99(raw_value: int) -> int:
+    """Convert a live ET312 level byte to the truncated 0-99 front-panel scale."""
+    clamped = min(max(raw_value, 0), 0xFF)
+    return (clamped * CHANNEL_POWER_UI_MAX) // 0xFF
+
+
 def calculate_checksum(data: list[int]) -> int:
     """Calculate the ET312 packet checksum."""
     return sum(data) & 0xFF
@@ -577,8 +583,8 @@ class ET312Client:
             connected=True,
             mode_code=mode_code,
             mode=MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
-            power_level_a=raw_byte_to_ui_99(registers[REG_CHANNEL_A_LEVEL]),
-            power_level_b=raw_byte_to_ui_99(registers[REG_CHANNEL_B_LEVEL]),
+            power_level_a=raw_level_byte_to_ui_99(registers[REG_CHANNEL_A_LEVEL]),
+            power_level_b=raw_level_byte_to_ui_99(registers[REG_CHANNEL_B_LEVEL]),
             mode_options=tuple(MODES[code] for code in sorted(MODES)),
             battery_percent=raw_byte_to_ui_99(registers[REG_BATTERY_PERCENT]),
             multi_adjust=raw_byte_to_ui_99(registers[REG_MULTI_ADJUST_VALUE]),

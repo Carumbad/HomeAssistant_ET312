@@ -24,6 +24,7 @@ from custom_components.et312.et312 import (
     calculate_checksum,
     decode_read_response,
     raw_byte_to_ui_99,
+    raw_level_byte_to_ui_99,
     ui_power_to_raw,
 )
 
@@ -343,8 +344,8 @@ class Bridge:
             "connected": True,
             "mode_code": mode_code,
             "mode": MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
-            "power_level_a": raw_byte_to_ui_99(self._read_register(0x4064)),
-            "power_level_b": raw_byte_to_ui_99(self._read_register(0x4065)),
+            "power_level_a": raw_level_byte_to_ui_99(self._read_register(0x4064)),
+            "power_level_b": raw_level_byte_to_ui_99(self._read_register(0x4065)),
             "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
             "multi_adjust": raw_byte_to_ui_99(self._read_register(0x420D)),
             "available_modes": [MODES[code] for code in sorted(MODES)],
