@@ -19,8 +19,6 @@ except ImportError:
         ).strip("_")
 
 from .const import (
-    CHANNEL_A_BASE,
-    CHANNEL_B_BASE,
     CHANNEL_POWER_MAX,
     CHANNEL_POWER_MIN,
     CHANNEL_POWER_UI_MAX,
@@ -37,11 +35,14 @@ from .const import (
     CONF_TIMEOUT,
     CONNECTION_MQTT,
     CONNECTION_SERIAL,
+    CONTROL_FLAG_DISABLE_KNOBS,
+    CONTROL_FLAG_DISABLE_MULTI_ADJUST,
     REG_EXECUTE_COMMAND,
     REG_BATTERY_PERCENT,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
     REG_CIPHER_KEY,
+    REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
     REG_MULTI_ADJUST_VALUE,
 )
@@ -510,6 +511,8 @@ class ET312Client:
         self._box_key: int | None = None
         self._cipher_mask: int | None = None
         self._last_cipher_mask: int | None = None
+        self._original_control_flags: int | None = None
+        self._current_control_flags: int | None = None
 
     def _build_transport(self, config: ET312ConnectionConfig) -> ET312Transport:
         """Create the selected ET312 transport."""
@@ -564,6 +567,8 @@ class ET312Client:
             self._connected = False
             self._box_key = None
             self._cipher_mask = None
+            self._original_control_flags = None
+            self._current_control_flags = None
             raise
 
         self._connected = True
@@ -601,11 +606,20 @@ class ET312Client:
     async def async_disconnect(self) -> None:
         """Disconnect from the device."""
         if self._connected and self.config.connection_type == CONNECTION_SERIAL:
-            await self.async_reset_key()
+            try:
+                await self._async_restore_control_flags()
+            except ET312ConnectionError:
+                pass
+            try:
+                await self.async_reset_key()
+            except ET312ConnectionError:
+                pass
         await self.transport.async_close()
         self._connected = False
         self._box_key = None
         self._cipher_mask = None
+        self._original_control_flags = None
+        self._current_control_flags = None
 
     async def async_read_register(self, address: int) -> int:
         """Read a single ET312 register."""
@@ -627,6 +641,39 @@ class ET312Client:
         for address in addresses:
             result[address] = await self.async_read_register(address)
         return result
+
+    async def _async_get_control_flags(self) -> int:
+        """Return the current ET312 control flags, caching the original state."""
+        if self._current_control_flags is not None:
+            return self._current_control_flags
+
+        flags = await self.async_read_register(REG_CONTROL_FLAGS)
+        if self._original_control_flags is None:
+            self._original_control_flags = flags
+        self._current_control_flags = flags
+        return flags
+
+    async def _async_ensure_control_flags(self, required_mask: int) -> None:
+        """Enable the control-flag bits needed for software control."""
+        current_flags = await self._async_get_control_flags()
+        desired_flags = current_flags | required_mask
+        if desired_flags == current_flags:
+            return
+
+        await self.async_write_register(REG_CONTROL_FLAGS, [desired_flags])
+        self._current_control_flags = desired_flags
+
+    async def _async_restore_control_flags(self) -> None:
+        """Restore the ET312 control flags we found before taking software control."""
+        if (
+            self._original_control_flags is None
+            or self._current_control_flags is None
+            or self._current_control_flags == self._original_control_flags
+        ):
+            return
+
+        await self.async_write_register(REG_CONTROL_FLAGS, [self._original_control_flags])
+        self._current_control_flags = self._original_control_flags
 
     async def async_reset_key(self) -> None:
         """Reset the device cipher key if we negotiated one."""
@@ -664,18 +711,15 @@ class ET312Client:
             )
             return
 
-        raw_level = ui_power_to_raw(level)
-
         if channel == "a":
-            base = CHANNEL_A_BASE
+            level_register = REG_CHANNEL_A_LEVEL
         elif channel == "b":
-            base = CHANNEL_B_BASE
+            level_register = REG_CHANNEL_B_LEVEL
         else:
             raise ET312ConnectionError(f"Unknown ET312 channel: {channel}")
 
-        await self.async_write_register(base + 0xAC, [0x00])
-        await self.async_write_register(base + 0xA8, [0x00, 0x00])
-        await self.async_write_register(base + 0xA5, [raw_level])
+        await self._async_ensure_control_flags(CONTROL_FLAG_DISABLE_KNOBS)
+        await self.async_write_register(level_register, [ui_99_to_raw_byte(level)])
 
     async def async_set_multi_adjust(self, value: int) -> None:
         """Set the ET312 multi-adjust value."""
@@ -690,6 +734,9 @@ class ET312Client:
             )
             return
 
+        await self._async_ensure_control_flags(
+            CONTROL_FLAG_DISABLE_KNOBS | CONTROL_FLAG_DISABLE_MULTI_ADJUST
+        )
         await self.async_write_register(
             REG_MULTI_ADJUST_VALUE,
             [ui_99_to_raw_byte(value)],

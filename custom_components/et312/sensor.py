@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -20,23 +19,19 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="power_level_a",
         name="Channel A Power",
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="power_level_b",
         name="Channel B Power",
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
     SensorEntityDescription(
         key="battery_percent",
         name="Battery",
-        entity_category=EntityCategory.DIAGNOSTIC,
         native_unit_of_measurement="%",
     ),
     SensorEntityDescription(
         key="multi_adjust",
         name="Multi Adjust",
-        entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
 

@@ -6,13 +6,12 @@ import unittest
 from unittest.mock import AsyncMock
 
 from custom_components.et312.const import (
-    CHANNEL_A_BASE,
-    CHANNEL_B_BASE,
-    CHANNEL_POWER_MAX,
-    CHANNEL_POWER_MIN,
     CONNECTION_SERIAL,
+    CONTROL_FLAG_DISABLE_KNOBS,
+    CONTROL_FLAG_DISABLE_MULTI_ADJUST,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
+    REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
     REG_MULTI_ADJUST_VALUE,
 )
@@ -24,9 +23,7 @@ from custom_components.et312.et312 import (
     build_cipher_mask,
     flip_nibbles,
     raw_level_byte_to_ui_99,
-    raw_power_to_ui,
     ui_99_to_raw_byte,
-    ui_power_to_raw,
 )
 
 
@@ -45,18 +42,6 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         client.transport = AsyncMock()
         client._connected = True
         return client
-
-    def test_power_scale_boundaries(self) -> None:
-        """The displayed range should mirror the box's 0-99 UI."""
-        self.assertEqual(raw_power_to_ui(CHANNEL_POWER_MIN), 0)
-        self.assertEqual(raw_power_to_ui(CHANNEL_POWER_MAX), 99)
-        self.assertEqual(ui_power_to_raw(0), CHANNEL_POWER_MIN)
-        self.assertEqual(ui_power_to_raw(99), CHANNEL_POWER_MAX)
-
-    def test_power_scale_round_trip_is_close(self) -> None:
-        """UI power values should round-trip closely through the raw mapping."""
-        for value in (0, 1, 25, 50, 75, 98, 99):
-            self.assertLessEqual(abs(raw_power_to_ui(ui_power_to_raw(value)) - value), 1)
 
     def test_live_level_scale_matches_front_panel_truncation(self) -> None:
         """Live A/B level registers should truncate the 0-255 byte to 0-99 like the ET312 UI."""
@@ -90,23 +75,25 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
             ],
         )
 
-    async def test_set_channel_power_writes_expected_registers(self) -> None:
-        """Channel power writes should clear modulation/select state before setting power."""
+    async def test_set_channel_power_writes_live_level_registers(self) -> None:
+        """Channel power writes should enable software control and poke the live level bytes."""
         client = self._make_client()
+        client.async_read_register = AsyncMock(return_value=0x00)
         client.async_write_register = AsyncMock()
 
         await client.async_set_channel_power("a", 99)
         await client.async_set_channel_power("b", 0)
 
         self.assertEqual(
+            client.async_read_register.await_args_list,
+            [unittest.mock.call(REG_CONTROL_FLAGS)],
+        )
+        self.assertEqual(
             client.async_write_register.await_args_list,
             [
-                unittest.mock.call(CHANNEL_A_BASE + 0xAC, [0x00]),
-                unittest.mock.call(CHANNEL_A_BASE + 0xA8, [0x00, 0x00]),
-                unittest.mock.call(CHANNEL_A_BASE + 0xA5, [CHANNEL_POWER_MAX]),
-                unittest.mock.call(CHANNEL_B_BASE + 0xAC, [0x00]),
-                unittest.mock.call(CHANNEL_B_BASE + 0xA8, [0x00, 0x00]),
-                unittest.mock.call(CHANNEL_B_BASE + 0xA5, [CHANNEL_POWER_MIN]),
+                unittest.mock.call(REG_CONTROL_FLAGS, [CONTROL_FLAG_DISABLE_KNOBS]),
+                unittest.mock.call(REG_CHANNEL_A_LEVEL, [ui_99_to_raw_byte(99)]),
+                unittest.mock.call(REG_CHANNEL_B_LEVEL, [ui_99_to_raw_byte(0)]),
             ],
         )
 
@@ -132,15 +119,26 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.multi_adjust, 21)
 
     async def test_set_multi_adjust_writes_expected_register(self) -> None:
-        """Multi-adjust writes should map the 0-99 UI scale into the ET312 byte register."""
+        """Multi-adjust writes should enable software control and poke the live MA register."""
         client = self._make_client()
+        client.async_read_register = AsyncMock(return_value=0x00)
         client.async_write_register = AsyncMock()
 
         await client.async_set_multi_adjust(50)
 
         self.assertEqual(
+            client.async_read_register.await_args_list,
+            [unittest.mock.call(REG_CONTROL_FLAGS)],
+        )
+        self.assertEqual(
             client.async_write_register.await_args_list,
-            [unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(50)])],
+            [
+                unittest.mock.call(
+                    REG_CONTROL_FLAGS,
+                    [CONTROL_FLAG_DISABLE_KNOBS | CONTROL_FLAG_DISABLE_MULTI_ADJUST],
+                ),
+                unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(50)]),
+            ],
         )
 
     async def test_invalid_channel_power_is_rejected(self) -> None:
