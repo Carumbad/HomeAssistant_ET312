@@ -1,0 +1,137 @@
+# Home Assistant ET312 Integration
+
+Custom Home Assistant integration scaffold for the ErosTek ET312.
+
+## Current status
+
+This repository currently contains the Home Assistant-side scaffold and a
+protocol model derived from the reference projects in `References/` plus:
+
+- [Carumbad/et312_mqtt](https://github.com/Carumbad/et312_mqtt)
+- [fenbyfluid/three-twelve-bee](https://github.com/fenbyfluid/three-twelve-bee)
+
+The integration is now aligned around a transport-agnostic ET312 client:
+
+- Config flow for choosing either direct serial or MQTT bridge
+- Polling data coordinator
+- Sensor entities for mode, channel power levels, battery, and MA value
+- Control entities for routine selection and channel A/B power setpoints
+- ET312 packet helpers for checksum, XOR cipher, register reads, and writes
+- Home Assistant MQTT bridge support plus the direct serial path
+
+## Protocol notes
+
+The references agree on the core serial protocol:
+
+- Serial speed is `19200` baud by default
+- Sync by sending `0x00` until the device responds with `0x07`
+- Negotiate a cipher key with `0x2F 0x00`, then XOR bytes with `device_key ^ 0x55`
+- Read memory with opcode `0x3C`
+- Write memory with opcode `0x3D + (len(data) << 4)`
+
+Useful registers for state polling:
+
+- `0x407B`: current mode
+- `0x4064`: channel A level
+- `0x4065`: channel B level
+- `0x4203`: battery percent
+- `0x420D`: multi-adjust value
+
+## Architecture direction
+
+The Home Assistant-side model should stay shared while we support two
+deployment styles:
+
+- `serial`: the ET312 is plugged directly into the Home Assistant host
+- `mqtt`: a remote Python bridge handles serial and exposes the device over MQTT
+
+For the `serial` path, the integration assumes the user provides a working
+serial device path such as `/dev/ttyUSB0`, `/dev/ttyACM0`, or a Bluetooth-backed
+`/dev/tty*` device exposed by the host OS.
+
+For the `mqtt` path, Home Assistant should already have its MQTT integration
+configured. The ET312 integration subscribes to bridge topics, publishes
+commands through Home Assistant's MQTT integration, and never opens the device
+directly.
+
+## MQTT Bridge Contract
+
+The bridge publishes retained state JSON to a state topic, for example
+`et312/state`:
+
+```json
+{
+  "connected": true,
+  "mode_code": 118,
+  "mode": "Waves",
+  "power_level_a": 10,
+  "power_level_b": 12,
+  "battery_percent": 72,
+  "multi_adjust": 50,
+  "available_modes": ["Power On", "Low", "Normal", "High", "Waves"]
+}
+```
+
+It publishes availability to an availability topic, for example
+`et312/availability`, using `online` and `offline`.
+
+Home Assistant publishes JSON commands to a command topic, for example
+`et312/command`:
+
+```json
+{"command": "set_mode", "mode": "Waves"}
+{"command": "set_power", "channel": "a", "value": 10}
+{"command": "set_power", "channel": "b", "value": 12}
+{"command": "request_state"}
+```
+
+## Testing
+
+Unit tests for the core client live in `tests/test_et312_client.py`:
+
+```bash
+python3 -m unittest tests.test_et312_client
+```
+
+For a minimal live hardware smoke test against a real ET312, use:
+
+```bash
+python3 scripts/live_serial_smoke_test.py /dev/ttyUSB0 --read-only
+python3 scripts/live_serial_smoke_test.py /dev/ttyUSB0 --mode Waves --power-a 10 --power-b 10
+```
+
+The smoke test connects, prints the initial state, optionally changes the mode
+and channel power levels, then reads the state again.
+
+If the ET312 is not syncing reliably, a lower-level probe is available:
+
+```bash
+python3 scripts/probe_serial_sync.py /dev/cu.Micro312-Audio
+```
+
+That script sends raw `0x00` sync bytes at both `19200` and `38400` baud and
+prints any response bytes, which is useful for debugging Bluetooth serial links.
+
+## MQTT Bridge Script
+
+The MQTT bridge script lives at `scripts/et312_mqtt_bridge.py`.
+
+Install its Python dependencies on the bridge host:
+
+```bash
+python3 -m pip install pyserial paho-mqtt
+```
+
+Example:
+
+```bash
+python3 scripts/et312_mqtt_bridge.py /dev/ttyUSB0 --mqtt-host 127.0.0.1
+```
+
+The bridge:
+
+- opens the ET312 over serial
+- syncs and negotiates the ET312 cipher key
+- publishes retained JSON state to the configured MQTT state topic
+- publishes `online` and `offline` to the availability topic
+- accepts `set_mode`, `set_power`, and `request_state` JSON commands

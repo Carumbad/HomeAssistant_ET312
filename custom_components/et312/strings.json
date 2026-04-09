@@ -1,0 +1,38 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Choose connection type",
+        "description": "Choose whether Home Assistant talks to the ET312 directly over serial or through an MQTT bridge.",
+        "data": {
+          "connection_type": "Connection type"
+        }
+      },
+      "serial": {
+        "title": "Connect to ET312 over serial",
+        "description": "Enter the serial connection details for your ET312 device.",
+        "data": {
+          "device": "Serial device path",
+          "baudrate": "Baud rate",
+          "timeout": "Timeout"
+        }
+      },
+      "mqtt": {
+        "title": "Connect to ET312 over MQTT",
+        "description": "Enter the MQTT topics used by your ET312 bridge. Home Assistant's MQTT integration must already be configured.",
+        "data": {
+          "mqtt_state_topic": "State topic",
+          "mqtt_command_topic": "Command topic",
+          "mqtt_availability_topic": "Availability topic",
+          "timeout": "Timeout"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the ET312 device"
+    },
+    "abort": {
+      "already_configured": "This ET312 device is already configured"
+    }
+  }
+}

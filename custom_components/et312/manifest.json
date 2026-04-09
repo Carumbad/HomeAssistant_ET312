@@ -1,0 +1,13 @@
+{
+  "domain": "et312",
+  "name": "ET312",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["mqtt"],
+  "documentation": "https://github.com/home-assistant/example-custom-config/custom_components/example_load_platform_after",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "loggers": ["custom_components.et312"],
+  "requirements": ["pyserial-asyncio-fast==0.16"],
+  "version": "0.1.0"
+}
