@@ -14,6 +14,7 @@ from custom_components.et312.const import (
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
     REG_CURRENT_MODE,
+    REG_MULTI_ADJUST_VALUE,
 )
 from custom_components.et312.et312 import (
     ET312Client,
@@ -24,6 +25,7 @@ from custom_components.et312.et312 import (
     flip_nibbles,
     raw_level_byte_to_ui_99,
     raw_power_to_ui,
+    ui_99_to_raw_byte,
     ui_power_to_raw,
 )
 
@@ -129,12 +131,31 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.battery_percent, 34)
         self.assertEqual(state.multi_adjust, 21)
 
+    async def test_set_multi_adjust_writes_expected_register(self) -> None:
+        """Multi-adjust writes should map the 0-99 UI scale into the ET312 byte register."""
+        client = self._make_client()
+        client.async_write_register = AsyncMock()
+
+        await client.async_set_multi_adjust(50)
+
+        self.assertEqual(
+            client.async_write_register.await_args_list,
+            [unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_99_to_raw_byte(50)])],
+        )
+
     async def test_invalid_channel_power_is_rejected(self) -> None:
         """Out-of-range UI values should fail before any write is attempted."""
         client = self._make_client()
 
         with self.assertRaises(ET312ConnectionError):
             await client.async_set_channel_power("a", 100)
+
+    async def test_invalid_multi_adjust_is_rejected(self) -> None:
+        """Out-of-range MA values should fail before any write is attempted."""
+        client = self._make_client()
+
+        with self.assertRaises(ET312ConnectionError):
+            await client.async_set_multi_adjust(100)
 
     async def test_key_setup_timeout_falls_back_to_box_key_zero(self) -> None:
         """Bluetooth sessions should tolerate missing key exchange replies."""

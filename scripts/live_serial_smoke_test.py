@@ -132,6 +132,7 @@ async def main() -> None:
     parser.add_argument("--mode", help="Optional ET312 mode to switch to")
     parser.add_argument("--power-a", type=int, help="Optional channel A power (0-99)")
     parser.add_argument("--power-b", type=int, help="Optional channel B power (0-99)")
+    parser.add_argument("--ma", type=int, help="Optional multi-adjust value (0-99)")
     parser.add_argument(
         "--read-only",
         action="store_true",
@@ -175,6 +176,10 @@ async def main() -> None:
             if args.power_b is not None:
                 print(f"Setting channel B power to: {args.power_b}")
                 await client.async_set_channel_power("b", args.power_b)
+
+            if args.ma is not None:
+                print(f"Setting multi-adjust to: {args.ma}")
+                await client.async_set_multi_adjust(args.ma)
 
         after = await client.async_get_state()
         print(f"Final state: {after}")

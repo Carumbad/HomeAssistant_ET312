@@ -9,7 +9,13 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CHANNEL_POWER_UI_MAX, CHANNEL_POWER_UI_MIN, DOMAIN
+from .const import (
+    CHANNEL_POWER_UI_MAX,
+    CHANNEL_POWER_UI_MIN,
+    DOMAIN,
+    MULTI_ADJUST_UI_MAX,
+    MULTI_ADJUST_UI_MIN,
+)
 from .coordinator import ET312DataUpdateCoordinator
 from .entity import ET312CoordinatorEntity
 
@@ -18,7 +24,8 @@ from .entity import ET312CoordinatorEntity
 class ET312NumberDescription(NumberEntityDescription):
     """ET312 number entity description."""
 
-    channel: str
+    channel: str | None = None
+    control: str = "power"
 
 
 NUMBERS: tuple[ET312NumberDescription, ...] = (
@@ -38,6 +45,14 @@ NUMBERS: tuple[ET312NumberDescription, ...] = (
         native_step=1,
         channel="b",
     ),
+    ET312NumberDescription(
+        key="multi_adjust",
+        name="Multi Adjust",
+        native_min_value=MULTI_ADJUST_UI_MIN,
+        native_max_value=MULTI_ADJUST_UI_MAX,
+        native_step=1,
+        control="multi_adjust",
+    ),
 )
 
 
@@ -52,7 +67,7 @@ async def async_setup_entry(
 
 
 class ET312PowerNumber(ET312CoordinatorEntity, NumberEntity):
-    """Number entity for ET312 channel power."""
+    """Number entity for ET312 controls."""
 
     def __init__(
         self,
@@ -66,14 +81,17 @@ class ET312PowerNumber(ET312CoordinatorEntity, NumberEntity):
 
     @property
     def native_value(self) -> float | None:
-        """Return the current channel power."""
+        """Return the current control value."""
         value = getattr(self.coordinator.data, self.entity_description.key)
         return None if value is None else float(value)
 
     async def async_set_native_value(self, value: float) -> None:
-        """Set the ET312 channel power."""
-        await self.coordinator.client.async_set_channel_power(
-            self.entity_description.channel,
-            int(value),
-        )
+        """Set the ET312 control value."""
+        if self.entity_description.control == "power":
+            await self.coordinator.client.async_set_channel_power(
+                self.entity_description.channel or "",
+                int(value),
+            )
+        else:
+            await self.coordinator.client.async_set_multi_adjust(int(value))
         await self.coordinator.async_request_refresh()

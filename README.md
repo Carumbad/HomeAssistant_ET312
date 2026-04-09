@@ -15,7 +15,7 @@ The integration is now aligned around a transport-agnostic ET312 client:
 - Config flow for choosing either direct serial or MQTT bridge
 - Polling data coordinator
 - Sensor entities for mode, channel power levels, battery, and MA value
-- Control entities for routine selection and channel A/B power setpoints
+- Control entities for routine selection, channel A/B power setpoints, and MA
 - ET312 packet helpers for checksum, XOR cipher, register reads, and writes
 - Home Assistant MQTT bridge support plus the direct serial path
 
@@ -82,6 +82,7 @@ Home Assistant publishes JSON commands to a command topic, for example
 {"command": "set_mode", "mode": "Waves"}
 {"command": "set_power", "channel": "a", "value": 10}
 {"command": "set_power", "channel": "b", "value": 12}
+{"command": "set_multi_adjust", "value": 50}
 {"command": "request_state"}
 ```
 
@@ -97,7 +98,7 @@ For a minimal live hardware smoke test against a real ET312, use:
 
 ```bash
 python3 scripts/live_serial_smoke_test.py /dev/ttyUSB0 --read-only
-python3 scripts/live_serial_smoke_test.py /dev/ttyUSB0 --mode Waves --power-a 10 --power-b 10
+python3 scripts/live_serial_smoke_test.py /dev/ttyUSB0 --mode Waves --power-a 10 --power-b 10 --ma 50
 ```
 
 The smoke test connects, prints the initial state, optionally changes the mode

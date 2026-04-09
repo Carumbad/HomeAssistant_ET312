@@ -25,6 +25,7 @@ from custom_components.et312.et312 import (
     decode_read_response,
     raw_byte_to_ui_99,
     raw_level_byte_to_ui_99,
+    ui_99_to_raw_byte,
     ui_power_to_raw,
 )
 
@@ -298,6 +299,8 @@ class Bridge:
             self._set_mode(str(payload["mode"]))
         elif command == "set_power":
             self._set_power(str(payload["channel"]), int(payload["value"]))
+        elif command == "set_multi_adjust":
+            self._set_multi_adjust(int(payload["value"]))
         elif command == "request_state":
             pass
         else:
@@ -337,6 +340,9 @@ class Bridge:
         self._write_register(base + 0xA8, [0x00, 0x00])
         self._write_register(base + 0xA5, [raw])
 
+    def _set_multi_adjust(self, value: int) -> None:
+        self._write_register(0x420D, [ui_99_to_raw_byte(value)])
+
     def publish_state(self) -> None:
         """Publish the current ET312 state as retained JSON."""
         mode_code = self._read_register(0x407B)
@@ -360,6 +366,7 @@ class Bridge:
             f"{publish_info.rc}: mode={payload['mode']} "
             f"A={payload['power_level_a']} "
             f"B={payload['power_level_b']} "
+            f"MA={payload['multi_adjust']} "
             f"battery={payload['battery_percent']}"
         )
 

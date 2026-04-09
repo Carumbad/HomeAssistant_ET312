@@ -26,6 +26,8 @@ from .const import (
     CHANNEL_POWER_UI_MAX,
     CHANNEL_POWER_UI_MIN,
     MODES,
+    MULTI_ADJUST_UI_MAX,
+    MULTI_ADJUST_UI_MIN,
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
     CONF_DEVICE,
@@ -152,6 +154,12 @@ def raw_level_byte_to_ui_99(raw_value: int) -> int:
     """Convert a live ET312 level byte to the truncated 0-99 front-panel scale."""
     clamped = min(max(raw_value, 0), 0xFF)
     return (clamped * CHANNEL_POWER_UI_MAX) // 0xFF
+
+
+def ui_99_to_raw_byte(ui_value: int) -> int:
+    """Convert a 0-99 UI value to a generic ET312 raw byte."""
+    clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
+    return round((clamped * 0xFF) / MULTI_ADJUST_UI_MAX)
 
 
 def calculate_checksum(data: list[int]) -> int:
@@ -668,6 +676,24 @@ class ET312Client:
         await self.async_write_register(base + 0xAC, [0x00])
         await self.async_write_register(base + 0xA8, [0x00, 0x00])
         await self.async_write_register(base + 0xA5, [raw_level])
+
+    async def async_set_multi_adjust(self, value: int) -> None:
+        """Set the ET312 multi-adjust value."""
+        if value < MULTI_ADJUST_UI_MIN or value > MULTI_ADJUST_UI_MAX:
+            raise ET312ConnectionError(
+                "Multi Adjust must be between "
+                f"{MULTI_ADJUST_UI_MIN} and {MULTI_ADJUST_UI_MAX}"
+            )
+        if self.config.connection_type == CONNECTION_MQTT:
+            await self.transport.async_publish_command(
+                {"command": "set_multi_adjust", "value": value}
+            )
+            return
+
+        await self.async_write_register(
+            REG_MULTI_ADJUST_VALUE,
+            [ui_99_to_raw_byte(value)],
+        )
 
     def _mode_code_from_name(self, mode_name: str) -> int:
         """Resolve a Home Assistant select option to an ET312 mode code."""
