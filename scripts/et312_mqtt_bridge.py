@@ -52,7 +52,10 @@ def blocking_sync(
             if inter_attempt_delay:
                 time.sleep(inter_attempt_delay)
     finally:
-        port.timeout = original_timeout
+        try:
+            port.timeout = original_timeout
+        except (serial.SerialException, OSError):
+            pass
     raise RuntimeError("ET312 sync failed")
 
 
@@ -74,7 +77,10 @@ def blocking_setup_key(port, *, timeout: float) -> int:
             raise RuntimeError(f"Unexpected ET312 key exchange response: {response!r}")
         return response[1]
     finally:
-        port.timeout = original_timeout
+        try:
+            port.timeout = original_timeout
+        except (serial.SerialException, OSError):
+            pass
 
 
 class Bridge:
@@ -286,7 +292,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sync-inter-attempt-delay", type=float, default=0.1)
     parser.add_argument("--post-sync-delay", type=float, default=0.2)
     parser.add_argument("--key-exchange-timeout", type=float, default=1.5)
-    parser.add_argument("--connect-retries", type=int, default=4)
+    parser.add_argument("--connect-retries", type=int, default=1)
     parser.add_argument("--reconnect-delay", type=float, default=2.0)
     return parser.parse_args()
 
