@@ -110,6 +110,7 @@ class Bridge:
         if args.username:
             self.mqtt.username_pw_set(args.username, args.password)
         self.mqtt.on_connect = self._on_connect
+        self.mqtt.on_disconnect = self._on_disconnect
         self.mqtt.on_message = self._on_message
 
     def _log(self, message: str) -> None:
@@ -254,9 +255,22 @@ class Bridge:
                 time.sleep(self.args.reconnect_delay)
         assert self.serial_port is not None
         self.mqtt.will_set(self.args.availability_topic, "offline", retain=True)
-        self.mqtt.connect(self.args.mqtt_host, self.args.mqtt_port, 60)
+        self._log(
+            f"Connecting to MQTT broker {self.args.mqtt_host}:{self.args.mqtt_port}"
+        )
+        connect_rc = self.mqtt.connect(self.args.mqtt_host, self.args.mqtt_port, 60)
+        self._log(
+            f"MQTT connect returned {connect_rc}; "
+            f"socket_open={bool(self.mqtt.socket())}"
+        )
         self.mqtt.loop_start()
-        self.mqtt.publish(self.args.availability_topic, "online", retain=True)
+        self._log("MQTT loop started")
+        availability_info = self.mqtt.publish(
+            self.args.availability_topic,
+            "online",
+            retain=True,
+        )
+        self._log(f"Published availability with rc={availability_info.rc}")
         self.publish_state()
 
     def close(self) -> None:
@@ -272,7 +286,12 @@ class Bridge:
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         """Subscribe to command topic on connect."""
+        self._log(f"MQTT connected with reason code {reason_code}")
         client.subscribe(self.args.command_topic)
+
+    def _on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties) -> None:
+        """Log MQTT disconnects for troubleshooting."""
+        self._log(f"MQTT disconnected with reason code {reason_code}")
 
     def _on_message(self, client, userdata, msg) -> None:
         """Handle Home Assistant commands."""
@@ -334,7 +353,18 @@ class Bridge:
             "multi_adjust": raw_byte_to_ui_99(self._read_register(0x420D)),
             "available_modes": [MODES[code] for code in sorted(MODES)],
         }
-        self.mqtt.publish(self.args.state_topic, json.dumps(payload), retain=True)
+        publish_info = self.mqtt.publish(
+            self.args.state_topic,
+            json.dumps(payload),
+            retain=True,
+        )
+        self._log(
+            "Published state with rc="
+            f"{publish_info.rc}: mode={payload['mode']} "
+            f"A={payload['power_level_a']} "
+            f"B={payload['power_level_b']} "
+            f"battery={payload['battery_percent']}"
+        )
 
 
 def parse_args() -> argparse.Namespace:
