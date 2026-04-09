@@ -3,9 +3,9 @@
 set -euo pipefail
 
 SERVICE_NAME="et312-rfcomm"
+INSTALL_DIR="/opt/et312-mqtt-bridge"
 CONFIG_FILE="${INSTALL_DIR}/config/${SERVICE_NAME}.env"
 SYSTEMD_UNIT="/etc/systemd/system/${SERVICE_NAME}.service"
-INSTALL_DIR="/opt/et312-mqtt-bridge"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 ET312_MAC=""
