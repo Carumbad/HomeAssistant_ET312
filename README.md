@@ -135,6 +135,7 @@ The bridge:
 - publishes retained JSON state to the configured MQTT state topic
 - publishes `online` and `offline` to the availability topic
 - accepts `set_mode`, `set_power`, and `request_state` JSON commands
+- uses slower, retry-heavy sync defaults that are friendlier to Bluetooth RFCOMM links
 
 ## Raspberry Pi Install
 
@@ -208,3 +209,7 @@ Once `/dev/rfcomm0` is working, you can use it with the bridge installer:
 ```bash
 sudo ./scripts/install_rpi_bridge.sh --device /dev/rfcomm0 --mqtt-host 192.168.1.20
 ```
+
+For Bluetooth serial, the bridge installer defaults are intentionally more
+patient than the wired case: longer startup delay, more sync attempts, and
+reconnect retries before giving up.

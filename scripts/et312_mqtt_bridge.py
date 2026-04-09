@@ -27,30 +27,54 @@ from custom_components.et312.et312 import (
 )
 
 
-def blocking_sync(port, key: int | None) -> None:
+def blocking_sync(
+    port,
+    key: int | None,
+    *,
+    attempts: int,
+    read_timeout: float,
+    inter_attempt_delay: float,
+) -> None:
     """Synchronize the ET312 serial stream."""
     payload = bytes(apply_cipher([0x00], key))
-    for _ in range(12):
-        port.write(payload)
-        response = port.read(1)
-        if response == b"\x07":
-            return
+    original_timeout = port.timeout
+    port.timeout = read_timeout
+    try:
+        for _ in range(attempts):
+            port.write(payload)
+            port.flush()
+            try:
+                response = port.read(1)
+            except serial.SerialException:
+                response = b""
+            if response == b"\x07":
+                return
+            if inter_attempt_delay:
+                time.sleep(inter_attempt_delay)
+    finally:
+        port.timeout = original_timeout
     raise RuntimeError("ET312 sync failed")
 
 
-def blocking_setup_key(port) -> int:
+def blocking_setup_key(port, *, timeout: float) -> int:
     """Negotiate the ET312 key."""
-    command = [0x2F, 0x00]
-    payload = command + [calculate_checksum(command)]
-    port.write(bytes(payload))
-    response = list(port.read(3))
-    if len(response) != 3:
-        raise RuntimeError("ET312 key exchange timed out")
-    if calculate_checksum(response[:-1]) != response[-1]:
-        raise RuntimeError("ET312 key exchange checksum mismatch")
-    if response[0] != 0x21:
-        raise RuntimeError(f"Unexpected ET312 key exchange response: {response!r}")
-    return response[1]
+    original_timeout = port.timeout
+    port.timeout = timeout
+    try:
+        command = [0x2F, 0x00]
+        payload = command + [calculate_checksum(command)]
+        port.write(payload)
+        port.flush()
+        response = list(port.read(3))
+        if len(response) != 3:
+            raise RuntimeError("ET312 key exchange timed out")
+        if calculate_checksum(response[:-1]) != response[-1]:
+            raise RuntimeError("ET312 key exchange checksum mismatch")
+        if response[0] != 0x21:
+            raise RuntimeError(f"Unexpected ET312 key exchange response: {response!r}")
+        return response[1]
+    finally:
+        port.timeout = original_timeout
 
 
 class Bridge:
@@ -58,18 +82,7 @@ class Bridge:
 
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
-        self.serial_port = serial.Serial(
-            args.device,
-            args.baudrate,
-            timeout=args.timeout,
-            write_timeout=args.timeout,
-            parity=serial.PARITY_NONE,
-            bytesize=serial.EIGHTBITS,
-            stopbits=serial.STOPBITS_ONE,
-            xonxoff=False,
-            rtscts=False,
-            dsrdtr=False,
-        )
+        self.serial_port: serial.Serial | None = None
         self.device_key: int | None = None
         self.cipher_key: int | None = None
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
@@ -78,12 +91,85 @@ class Bridge:
         self.mqtt.on_connect = self._on_connect
         self.mqtt.on_message = self._on_message
 
+    def _log(self, message: str) -> None:
+        """Write a bridge log line to stderr."""
+        print(f"[et312-bridge] {message}", file=sys.stderr, flush=True)
+
+    def _open_serial(self) -> None:
+        """Open the serial device."""
+        self.serial_port = serial.Serial(
+            self.args.device,
+            self.args.baudrate,
+            timeout=self.args.timeout,
+            write_timeout=self.args.timeout,
+            parity=serial.PARITY_NONE,
+            bytesize=serial.EIGHTBITS,
+            stopbits=serial.STOPBITS_ONE,
+            xonxoff=False,
+            rtscts=False,
+            dsrdtr=False,
+        )
+
+    def _close_serial(self) -> None:
+        """Close the serial device if it is open."""
+        if self.serial_port is None:
+            return
+        try:
+            self.serial_port.close()
+        finally:
+            self.serial_port = None
+
     def connect(self) -> None:
         """Connect serial and MQTT layers."""
-        self.serial_port.reset_input_buffer()
-        blocking_sync(self.serial_port, None)
-        self.device_key = blocking_setup_key(self.serial_port)
-        self.cipher_key = self.device_key ^ 0x55
+        last_error: Exception | None = None
+        for attempt in range(1, self.args.connect_retries + 1):
+            self._close_serial()
+            self.device_key = None
+            self.cipher_key = None
+            try:
+                self._log(
+                    f"Connect attempt {attempt}/{self.args.connect_retries} "
+                    f"on {self.args.device} at {self.args.baudrate} baud"
+                )
+                self._open_serial()
+                assert self.serial_port is not None
+                if self.args.startup_delay:
+                    self._log(f"Waiting {self.args.startup_delay:.2f}s for serial link to settle")
+                    time.sleep(self.args.startup_delay)
+                self.serial_port.reset_input_buffer()
+                self.serial_port.reset_output_buffer()
+                self._log(
+                    f"Trying sync with {self.args.sync_attempts} attempts, "
+                    f"read timeout {self.args.sync_read_timeout:.2f}s"
+                )
+                blocking_sync(
+                    self.serial_port,
+                    None,
+                    attempts=self.args.sync_attempts,
+                    read_timeout=self.args.sync_read_timeout,
+                    inter_attempt_delay=self.args.sync_inter_attempt_delay,
+                )
+                if self.args.post_sync_delay:
+                    time.sleep(self.args.post_sync_delay)
+                self.device_key = blocking_setup_key(
+                    self.serial_port,
+                    timeout=self.args.key_exchange_timeout,
+                )
+                self.cipher_key = self.device_key ^ 0x55
+                self._log(f"Connected; negotiated ET312 key 0x{self.device_key:02X}")
+                break
+            except (serial.SerialException, RuntimeError) as err:
+                last_error = err
+                self._log(f"Attempt {attempt} failed: {err}")
+                if attempt >= self.args.connect_retries:
+                    raise RuntimeError(
+                        f"ET312 connection failed after {attempt} attempt(s): {err}"
+                    ) from err
+                self._log(
+                    f"Retrying after {self.args.reconnect_delay:.2f}s"
+                )
+                time.sleep(self.args.reconnect_delay)
+        assert self.serial_port is not None
         self.mqtt.will_set(self.args.availability_topic, "offline", retain=True)
         self.mqtt.connect(self.args.mqtt_host, self.args.mqtt_port, 60)
         self.mqtt.loop_start()
@@ -99,7 +185,7 @@ class Bridge:
             self.mqtt.publish(self.args.availability_topic, "offline", retain=True)
             self.mqtt.loop_stop()
             self.mqtt.disconnect()
-            self.serial_port.close()
+            self._close_serial()
 
     def _on_connect(self, client, userdata, flags, reason_code, properties) -> None:
         """Subscribe to command topic on connect."""
@@ -121,6 +207,7 @@ class Bridge:
 
     def _read_register(self, address: int) -> int:
         payload = build_read_command(address)
+        assert self.serial_port is not None
         self.serial_port.write(bytes(apply_cipher(payload, self.cipher_key)))
         response = list(self.serial_port.read(3))
         if len(response) != 3:
@@ -129,6 +216,7 @@ class Bridge:
 
     def _write_register(self, address: int, values: list[int]) -> None:
         payload = build_write_command(address, values)
+        assert self.serial_port is not None
         self.serial_port.write(bytes(apply_cipher(payload, self.cipher_key)))
         ack = self.serial_port.read(1)
         if ack != b"\x06":
@@ -180,6 +268,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--command-topic", default="et312/command")
     parser.add_argument("--availability-topic", default="et312/availability")
     parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--startup-delay", type=float, default=1.5)
+    parser.add_argument("--sync-attempts", type=int, default=40)
+    parser.add_argument("--sync-read-timeout", type=float, default=0.35)
+    parser.add_argument("--sync-inter-attempt-delay", type=float, default=0.1)
+    parser.add_argument("--post-sync-delay", type=float, default=0.2)
+    parser.add_argument("--key-exchange-timeout", type=float, default=1.5)
+    parser.add_argument("--connect-retries", type=int, default=4)
+    parser.add_argument("--reconnect-delay", type=float, default=2.0)
     return parser.parse_args()
 
 

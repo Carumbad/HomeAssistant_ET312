@@ -20,6 +20,14 @@ AVAILABILITY_TOPIC="et312/availability"
 POLL_INTERVAL="2.0"
 TIMEOUT="1.0"
 BAUDRATE="19200"
+STARTUP_DELAY="1.5"
+SYNC_ATTEMPTS="40"
+SYNC_READ_TIMEOUT="0.35"
+SYNC_INTER_ATTEMPT_DELAY="0.1"
+POST_SYNC_DELAY="0.2"
+KEY_EXCHANGE_TIMEOUT="1.5"
+CONNECT_RETRIES="4"
+RECONNECT_DELAY="2.0"
 
 usage() {
   cat <<EOF
@@ -38,6 +46,14 @@ Options:
   --poll-interval SECONDS    State publish interval. Default: ${POLL_INTERVAL}
   --timeout SECONDS          Serial timeout. Default: ${TIMEOUT}
   --baudrate BAUD            Serial baudrate. Default: ${BAUDRATE}
+  --startup-delay SECONDS    Delay after opening the serial device. Default: ${STARTUP_DELAY}
+  --sync-attempts COUNT      Sync byte attempts per connect. Default: ${SYNC_ATTEMPTS}
+  --sync-read-timeout SEC    Per-sync read timeout. Default: ${SYNC_READ_TIMEOUT}
+  --sync-gap SEC             Delay between sync attempts. Default: ${SYNC_INTER_ATTEMPT_DELAY}
+  --post-sync-delay SEC      Delay after sync before key exchange. Default: ${POST_SYNC_DELAY}
+  --key-timeout SEC          Key exchange timeout. Default: ${KEY_EXCHANGE_TIMEOUT}
+  --connect-retries COUNT    Serial reconnect attempts. Default: ${CONNECT_RETRIES}
+  --reconnect-delay SEC      Delay between reconnect attempts. Default: ${RECONNECT_DELAY}
   --install-dir PATH         App install location. Default: ${INSTALL_DIR}
   --service-user USER        Service account. Default: ${SERVICE_USER}
   --help                     Show this help.
@@ -103,6 +119,38 @@ parse_args() {
         ;;
       --baudrate)
         BAUDRATE="$2"
+        shift 2
+        ;;
+      --startup-delay)
+        STARTUP_DELAY="$2"
+        shift 2
+        ;;
+      --sync-attempts)
+        SYNC_ATTEMPTS="$2"
+        shift 2
+        ;;
+      --sync-read-timeout)
+        SYNC_READ_TIMEOUT="$2"
+        shift 2
+        ;;
+      --sync-gap)
+        SYNC_INTER_ATTEMPT_DELAY="$2"
+        shift 2
+        ;;
+      --post-sync-delay)
+        POST_SYNC_DELAY="$2"
+        shift 2
+        ;;
+      --key-timeout)
+        KEY_EXCHANGE_TIMEOUT="$2"
+        shift 2
+        ;;
+      --connect-retries)
+        CONNECT_RETRIES="$2"
+        shift 2
+        ;;
+      --reconnect-delay)
+        RECONNECT_DELAY="$2"
         shift 2
         ;;
       --install-dir)
@@ -181,6 +229,14 @@ STATE_TOPIC="${STATE_TOPIC}"
 COMMAND_TOPIC="${COMMAND_TOPIC}"
 AVAILABILITY_TOPIC="${AVAILABILITY_TOPIC}"
 POLL_INTERVAL="${POLL_INTERVAL}"
+STARTUP_DELAY="${STARTUP_DELAY}"
+SYNC_ATTEMPTS="${SYNC_ATTEMPTS}"
+SYNC_READ_TIMEOUT="${SYNC_READ_TIMEOUT}"
+SYNC_INTER_ATTEMPT_DELAY="${SYNC_INTER_ATTEMPT_DELAY}"
+POST_SYNC_DELAY="${POST_SYNC_DELAY}"
+KEY_EXCHANGE_TIMEOUT="${KEY_EXCHANGE_TIMEOUT}"
+CONNECT_RETRIES="${CONNECT_RETRIES}"
+RECONNECT_DELAY="${RECONNECT_DELAY}"
 EOF
 
   chown root:"${SERVICE_USER}" "${CONFIG_FILE}"

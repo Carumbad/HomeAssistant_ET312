@@ -43,6 +43,14 @@ ARGS=(
   --command-topic "${COMMAND_TOPIC}"
   --availability-topic "${AVAILABILITY_TOPIC}"
   --poll-interval "${POLL_INTERVAL}"
+  --startup-delay "${STARTUP_DELAY:-1.5}"
+  --sync-attempts "${SYNC_ATTEMPTS:-40}"
+  --sync-read-timeout "${SYNC_READ_TIMEOUT:-0.35}"
+  --sync-inter-attempt-delay "${SYNC_INTER_ATTEMPT_DELAY:-0.1}"
+  --post-sync-delay "${POST_SYNC_DELAY:-0.2}"
+  --key-exchange-timeout "${KEY_EXCHANGE_TIMEOUT:-1.5}"
+  --connect-retries "${CONNECT_RETRIES:-4}"
+  --reconnect-delay "${RECONNECT_DELAY:-2.0}"
 )
 
 if [[ -n "${MQTT_USERNAME:-}" ]]; then
