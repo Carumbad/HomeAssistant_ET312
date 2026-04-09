@@ -5,7 +5,7 @@ Custom Home Assistant integration scaffold for the ErosTek ET312.
 ## Current status
 
 This repository currently contains the Home Assistant-side scaffold and a
-protocol model derived from the reference projects in `References/` plus:
+protocol model derived from some existing projects:
 
 - [Carumbad/et312_mqtt](https://github.com/Carumbad/et312_mqtt)
 - [fenbyfluid/three-twelve-bee](https://github.com/fenbyfluid/three-twelve-bee)
