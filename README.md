@@ -21,8 +21,8 @@ To keep Home Assistant and HACS aligned, use this release pattern:
 
 Example:
 
-- `manifest.json`: `0.4.2`
-- GitHub release tag: `v0.4.2`
+- `manifest.json`: `0.4.3`
+- GitHub release tag: `v0.4.3`
 
 If you skip GitHub Releases, Home Assistant will still show the manifest version,
 but HACS will typically fall back to showing a commit-based version instead of a
