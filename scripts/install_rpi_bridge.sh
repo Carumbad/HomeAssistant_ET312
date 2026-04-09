@@ -225,6 +225,13 @@ install_app_files() {
     chmod 0755 "${INSTALL_DIR}/scripts/release_et312_rfcomm.sh"
   fi
   chown -R root:root "${INSTALL_DIR}"
+
+  if [[ -d "${INSTALL_DIR}/config" ]]; then
+    chown root:"${SERVICE_USER}" "${INSTALL_DIR}/config"
+    chmod 0750 "${INSTALL_DIR}/config"
+    find "${INSTALL_DIR}/config" -maxdepth 1 -type f -exec chown root:"${SERVICE_USER}" {} +
+    find "${INSTALL_DIR}/config" -maxdepth 1 -type f -exec chmod 0640 {} +
+  fi
 }
 
 write_config() {
