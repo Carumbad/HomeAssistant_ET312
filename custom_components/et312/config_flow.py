@@ -14,13 +14,12 @@ from .const import (
     CONF_MQTT_AVAILABILITY_TOPIC,
     CONF_MQTT_COMMAND_TOPIC,
     CONF_MQTT_STATE_TOPIC,
+    CONF_MQTT_TOPIC_PREFIX,
     CONF_TIMEOUT,
     CONNECTION_MQTT,
     CONNECTION_SERIAL,
     DEFAULT_BAUDRATE,
-    DEFAULT_MQTT_AVAILABILITY_TOPIC,
-    DEFAULT_MQTT_COMMAND_TOPIC,
-    DEFAULT_MQTT_STATE_TOPIC,
+    DEFAULT_MQTT_TOPIC_PREFIX,
     DEFAULT_NAME,
     DEFAULT_TIMEOUT,
     DOMAIN,
@@ -31,7 +30,7 @@ from .et312 import ET312Client, ET312ConnectionConfig, ET312ConnectionError
 class ET312ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for ET312."""
 
-    VERSION = 1
+    VERSION = 3
 
     async def async_step_user(
         self, user_input: dict[str, str] | None = None
@@ -74,24 +73,42 @@ class ET312ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, user_input: dict[str, str | int | float] | None = None
     ) -> FlowResult:
         """Configure an MQTT bridge connection."""
-        return await self._async_handle_connection_step(
-            user_input=user_input,
-            connection_type=CONNECTION_MQTT,
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            topic_prefix = str(user_input[CONF_MQTT_TOPIC_PREFIX]).strip().strip("/")
+            timeout = float(user_input[CONF_TIMEOUT])
+
+            if not topic_prefix:
+                errors[CONF_MQTT_TOPIC_PREFIX] = "invalid_topic_prefix"
+            else:
+                data = {
+                    CONF_CONNECTION_TYPE: CONNECTION_MQTT,
+                    CONF_MQTT_TOPIC_PREFIX: topic_prefix,
+                    CONF_MQTT_STATE_TOPIC: f"{topic_prefix}/+/state",
+                    CONF_MQTT_COMMAND_TOPIC: f"{topic_prefix}/+/command",
+                    CONF_MQTT_AVAILABILITY_TOPIC: f"{topic_prefix}/+/availability",
+                    CONF_TIMEOUT: timeout,
+                }
+                await self.async_set_unique_id(f"{CONNECTION_MQTT}:{topic_prefix}")
+                self._abort_if_unique_id_configured()
+                return self.async_create_entry(
+                    title=self._build_title(CONNECTION_MQTT, data),
+                    data=data,
+                )
+
+        return self.async_show_form(
+            step_id=CONNECTION_MQTT,
             data_schema=vol.Schema(
                 {
                     vol.Optional(
-                        CONF_MQTT_STATE_TOPIC, default=DEFAULT_MQTT_STATE_TOPIC
-                    ): str,
-                    vol.Optional(
-                        CONF_MQTT_COMMAND_TOPIC, default=DEFAULT_MQTT_COMMAND_TOPIC
-                    ): str,
-                    vol.Optional(
-                        CONF_MQTT_AVAILABILITY_TOPIC,
-                        default=DEFAULT_MQTT_AVAILABILITY_TOPIC,
+                        CONF_MQTT_TOPIC_PREFIX,
+                        default=DEFAULT_MQTT_TOPIC_PREFIX,
                     ): str,
                     vol.Optional(CONF_TIMEOUT, default=DEFAULT_TIMEOUT): vol.Coerce(float),
                 }
             ),
+            errors=errors,
         )
 
     async def _async_handle_connection_step(
@@ -146,4 +163,4 @@ class ET312ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Build a config-entry title."""
         if connection_type == CONNECTION_SERIAL:
             return f"{DEFAULT_NAME} {user_input[CONF_DEVICE]}"
-        return f"{DEFAULT_NAME} MQTT {user_input[CONF_MQTT_STATE_TOPIC]}"
+        return f"{DEFAULT_NAME} MQTT {user_input[CONF_MQTT_TOPIC_PREFIX]}"

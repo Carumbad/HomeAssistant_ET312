@@ -12,6 +12,7 @@ from scripts.et312_rpi_manager import (
     bluetooth_alias_role,
     bridge_topic_defaults,
     choose_rfcomm_device,
+    discover_bluetooth_devices,
     detect_rfcomm_channel,
     device_config_path,
     device_id_from_mac,
@@ -232,3 +233,118 @@ class RpiManagerTests(unittest.TestCase):
                 detect_rfcomm_channel("BE:B9:A5:7D:4F:FB"),
                 DEFAULT_ET312_RFCOMM_CHANNEL,
             )
+
+    def test_discovery_revalidates_existing_mapping_and_switches_to_working_candidate(self) -> None:
+        """Discovery should probe existing devices and move to a working candidate MAC."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_dir = Path(tmpdir)
+            bridge_config = install_dir / "config" / "et312-bridge.env"
+            bridge_config.parent.mkdir(parents=True, exist_ok=True)
+            bridge_config.write_text(
+                'MQTT_HOST="127.0.0.1"\nMQTT_PORT="1883"\nMQTT_TOPIC_PREFIX="et312"\n',
+                encoding="utf-8",
+            )
+            config_path = device_config_path(install_dir, "ET312_7D4FFB")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                'DEVICE_ID="ET312_7D4FFB"\n'
+                'RFCOMM_DEVICE="/dev/rfcomm1"\n'
+                'RFCOMM_CHANNEL="2"\n'
+                'ET312_BLUETOOTH_MAC="BE:B9:A5:7D:4F:FB"\n'
+                'ET312_BLUETOOTH_NAME="Micro312 - Audio"\n',
+                encoding="utf-8",
+            )
+
+            def probe_side_effect(*, mac: str, rfcomm_device: str, rfcomm_channel: str) -> dict[str, int]:
+                if mac == "BE:B9:A5:7D:4F:FB":
+                    raise RuntimeError("silent endpoint")
+                return {"mode_code": 0x94, "battery_percent": 90}
+
+            with patch(
+                "scripts.et312_rpi_manager.scan_bluetooth_devices",
+                return_value=[
+                    ("BE:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+                    ("BF:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+                ],
+            ), patch(
+                "scripts.et312_rpi_manager.bluetooth_device_info",
+                return_value="",
+            ), patch(
+                "scripts.et312_rpi_manager.trust_and_disconnect_device",
+            ), patch(
+                "scripts.et312_rpi_manager.pair_and_trust_device",
+            ), patch(
+                "scripts.et312_rpi_manager.interrogate_bluetooth_candidate",
+                side_effect=probe_side_effect,
+            ), patch(
+                "scripts.et312_rpi_manager.detect_rfcomm_channel",
+                return_value="2",
+            ):
+                registered = discover_bluetooth_devices(
+                    install_dir,
+                    scan_seconds=10,
+                    name_patterns=("Micro", "312"),
+                )
+
+            self.assertEqual(registered, ["ET312_7D4FFB"])
+            rewritten = parse_env_file(config_path)
+            self.assertEqual(rewritten["ET312_BLUETOOTH_MAC"], "BF:B9:A5:7D:4F:FB")
+            self.assertEqual(rewritten["RFCOMM_DEVICE"], "/dev/rfcomm1")
+
+    def test_discovery_falls_back_to_pair_alias_when_rfcomm_alias_fails(self) -> None:
+        """If the audio alias fails ET312 probing, discovery should try the paired alias too."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_dir = Path(tmpdir)
+            bridge_config = install_dir / "config" / "et312-bridge.env"
+            bridge_config.parent.mkdir(parents=True, exist_ok=True)
+            bridge_config.write_text(
+                'MQTT_HOST="127.0.0.1"\nMQTT_PORT="1883"\nMQTT_TOPIC_PREFIX="et312"\n',
+                encoding="utf-8",
+            )
+            config_path = device_config_path(install_dir, "ET312_7D4FFB")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                'DEVICE_ID="ET312_7D4FFB"\n'
+                'RFCOMM_DEVICE="/dev/rfcomm1"\n'
+                'RFCOMM_CHANNEL="2"\n'
+                'ET312_BLUETOOTH_MAC="BE:B9:A5:7D:4F:FB"\n'
+                'ET312_BLUETOOTH_NAME="Micro312 - Audio"\n'
+                'ET312_BLUETOOTH_PAIR_MAC="BF:B9:A5:7D:4F:FB"\n'
+                'ET312_BLUETOOTH_PAIR_NAME="Micro312 - SPP"\n',
+                encoding="utf-8",
+            )
+
+            def probe_side_effect(*, mac: str, rfcomm_device: str, rfcomm_channel: str) -> dict[str, int]:
+                if mac == "BE:B9:A5:7D:4F:FB":
+                    raise RuntimeError("silent endpoint")
+                return {"mode_code": 0x94, "battery_percent": 90}
+
+            with patch(
+                "scripts.et312_rpi_manager.scan_bluetooth_devices",
+                return_value=[
+                    ("BE:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+                    ("BF:B9:A5:7D:4F:FB", "Micro312 - SPP"),
+                ],
+            ), patch(
+                "scripts.et312_rpi_manager.bluetooth_device_info",
+                return_value="",
+            ), patch(
+                "scripts.et312_rpi_manager.trust_and_disconnect_device",
+            ), patch(
+                "scripts.et312_rpi_manager.pair_and_trust_device",
+            ), patch(
+                "scripts.et312_rpi_manager.interrogate_bluetooth_candidate",
+                side_effect=probe_side_effect,
+            ), patch(
+                "scripts.et312_rpi_manager.detect_rfcomm_channel",
+                return_value="2",
+            ):
+                registered = discover_bluetooth_devices(
+                    install_dir,
+                    scan_seconds=10,
+                    name_patterns=("Micro", "312"),
+                )
+
+            self.assertEqual(registered, ["ET312_7D4FFB"])
+            rewritten = parse_env_file(config_path)
+            self.assertEqual(rewritten["ET312_BLUETOOTH_MAC"], "BF:B9:A5:7D:4F:FB")

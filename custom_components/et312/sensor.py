@@ -5,11 +5,13 @@ from __future__ import annotations
 from homeassistant.components.sensor import SensorEntity, SensorEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from .const import CONF_CONNECTION_TYPE, CONNECTION_MQTT, DOMAIN
 from .coordinator import ET312DataUpdateCoordinator
-from .entity import ET312CoordinatorEntity
+from .entity import ET312CoordinatorEntity, ET312DiscoveredEntity
+from .mqtt_manager import ET312MqttDiscoveryManager
 
 SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
@@ -42,8 +44,34 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up ET312 sensors."""
-    coordinator: ET312DataUpdateCoordinator = hass.data[DOMAIN][entry.entry_id]
-    async_add_entities(ET312Sensor(coordinator, description) for description in SENSORS)
+    runtime = hass.data[DOMAIN][entry.entry_id]
+    if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_MQTT:
+        coordinator: ET312DataUpdateCoordinator = runtime
+        async_add_entities(ET312Sensor(coordinator, description) for description in SENSORS)
+        return
+
+    manager: ET312MqttDiscoveryManager = runtime
+    known: set[str] = set()
+
+    def add_for_device(device_id: str) -> None:
+        if device_id in known:
+            return
+        known.add(device_id)
+        async_add_entities(
+            ET312DiscoveredSensor(manager, device_id, description)
+            for description in SENSORS
+        )
+
+    for device_id in sorted(manager.devices):
+        add_for_device(device_id)
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass,
+            manager.signal_device_added,
+            add_for_device,
+        )
+    )
 
 
 class ET312Sensor(ET312CoordinatorEntity, SensorEntity):
@@ -57,9 +85,32 @@ class ET312Sensor(ET312CoordinatorEntity, SensorEntity):
         """Initialize the sensor."""
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.entry.entry_id}_{description.key}"
+        self._attr_unique_id = f"{coordinator.device_uid}_{description.key}"
 
     @property
     def native_value(self) -> str | int | None:
         """Return the sensor state."""
         return getattr(self.coordinator.data, self.entity_description.key)
+
+
+class ET312DiscoveredSensor(ET312DiscoveredEntity, SensorEntity):
+    """Sensor for a dynamically discovered MQTT ET312 device."""
+
+    def __init__(
+        self,
+        manager: ET312MqttDiscoveryManager,
+        device_id: str,
+        description: SensorEntityDescription,
+    ) -> None:
+        """Initialize discovered sensor."""
+        super().__init__(manager, device_id)
+        self.entity_description = description
+        self._attr_unique_id = f"{device_id}_{description.key}"
+
+    @property
+    def native_value(self) -> str | int | None:
+        """Return sensor value from cached ET312 state."""
+        state = self.device_state
+        if state is None:
+            return None
+        return getattr(state, self.entity_description.key)

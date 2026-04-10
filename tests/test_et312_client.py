@@ -6,7 +6,11 @@ import unittest
 from unittest.mock import AsyncMock
 
 from custom_components.et312.const import (
+    CONF_CONNECTION_TYPE,
+    CONF_DEVICE_ID,
+    CONF_MQTT_STATE_TOPIC,
     CONNECTION_SERIAL,
+    CONNECTION_MQTT,
     CONTROL_FLAG_DISABLE_KNOBS,
     MODES,
     REG_CHANNEL_A_LEVEL,
@@ -27,6 +31,13 @@ from custom_components.et312.et312 import (
     raw_multi_adjust_to_ui_99,
     ui_99_to_raw_byte,
     ui_multi_adjust_to_raw_byte,
+)
+from custom_components.et312.topics import (
+    build_topics,
+    entry_device_id,
+    extract_device_id_from_state_topic,
+    extract_prefix_from_state_topic,
+    is_valid_device_id,
 )
 
 
@@ -216,3 +227,49 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(client._box_key, 0x00)
         self.assertEqual(client._cipher_mask, build_cipher_mask(0x00, 0x00))
+
+    def test_topic_building_for_per_device_paths(self) -> None:
+        """MQTT paths should be generated as prefix/device_id/<kind>."""
+        self.assertEqual(
+            build_topics("ET312_8EE738", "et312"),
+            {
+                "state": "et312/ET312_8EE738/state",
+                "command": "et312/ET312_8EE738/command",
+                "availability": "et312/ET312_8EE738/availability",
+            },
+        )
+
+    def test_extract_device_id_and_prefix_from_state_topic(self) -> None:
+        """Topic parsing should recover both the ET312 id and prefix."""
+        topic = "et312/ET312_7D4FFB/state"
+        self.assertEqual(extract_device_id_from_state_topic(topic), "ET312_7D4FFB")
+        self.assertEqual(extract_prefix_from_state_topic(topic), "et312")
+        self.assertIsNone(extract_device_id_from_state_topic("et312/state"))
+
+    def test_device_id_validation(self) -> None:
+        """Device ids should follow ET312_XXXXXX with hex suffix."""
+        self.assertTrue(is_valid_device_id("et312_8ee738"))
+        self.assertFalse(is_valid_device_id("ET312_12345"))
+        self.assertFalse(is_valid_device_id("ET312_GG1234"))
+
+    def test_entry_device_id_prefers_explicit_and_falls_back_to_state_topic(self) -> None:
+        """Coordinator ids should be stable for MQTT entries."""
+        self.assertEqual(
+            entry_device_id(
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_MQTT,
+                    CONF_DEVICE_ID: "ET312_8EE738",
+                    CONF_MQTT_STATE_TOPIC: "et312/ET312_7D4FFB/state",
+                }
+            ),
+            "ET312_8EE738",
+        )
+        self.assertEqual(
+            entry_device_id(
+                {
+                    CONF_CONNECTION_TYPE: CONNECTION_MQTT,
+                    CONF_MQTT_STATE_TOPIC: "et312/ET312_7D4FFB/state",
+                }
+            ),
+            "ET312_7D4FFB",
+        )
