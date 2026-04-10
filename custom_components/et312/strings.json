@@ -19,7 +19,7 @@
       },
       "mqtt": {
         "title": "Connect to ET312 over MQTT",
-        "description": "Enter the MQTT topics used by your ET312 bridge. Home Assistant's MQTT integration must already be configured.",
+        "description": "Enter the MQTT topics used by your ET312 bridge. Home Assistant's MQTT integration must already be configured. If you are using more than one ET312 bridge, each device must use its own state, command, and availability topics.",
         "data": {
           "mqtt_state_topic": "State topic",
           "mqtt_command_topic": "Command topic",

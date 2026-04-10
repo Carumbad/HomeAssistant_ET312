@@ -2,13 +2,13 @@
 
 set -euo pipefail
 
-SERVICE_NAME="et312-mqtt-bridge"
-RFCOMM_SERVICE_NAME="et312-rfcomm"
 SERVICE_USER="et312"
 INSTALL_DIR="/opt/et312-mqtt-bridge"
+SYSTEMD_DIR="/etc/systemd/system"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ALLOW_DIRTY="0"
 SKIP_PULL="0"
+RUN_DISCOVERY="0"
 
 usage() {
   cat <<EOF
@@ -18,14 +18,17 @@ Usage:
 Options:
   --skip-pull      Do not run git pull before installing the update.
   --allow-dirty    Allow updating even if the local repo has uncommitted changes.
+  --discover       Run Bluetooth discovery before regenerating units.
   --help           Show this help.
 
 This script is intended to run on the Raspberry Pi bridge host. It:
   - pulls the latest checked-out branch with git
-  - stops the ET312 bridge and RFCOMM services cleanly
+  - stops all configured ET312 bridge and RFCOMM services cleanly
   - refreshes /opt/et312-mqtt-bridge from the current repo checkout
   - preserves existing config files in /opt/et312-mqtt-bridge/config/
-  - restarts RFCOMM first (if installed), then the MQTT bridge
+  - optionally runs Bluetooth discovery
+  - regenerates per-device systemd units from the known-device registry
+  - restarts RFCOMM units first, then all bridge units
 EOF
 }
 
@@ -45,6 +48,10 @@ parse_args() {
         ;;
       --allow-dirty)
         ALLOW_DIRTY="1"
+        shift
+        ;;
+      --discover)
+        RUN_DISCOVERY="1"
         shift
         ;;
       --help|-h)
@@ -91,24 +98,30 @@ pull_latest() {
 }
 
 stop_services() {
-  if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1; then
-    systemctl stop "${SERVICE_NAME}" || true
-  fi
+  local units=()
+  local legacy_units=(
+    "et312-rfcomm.service"
+    "et312-mqtt-bridge.service"
+  )
+  while IFS= read -r unit_name; do
+    [[ -z "${unit_name}" ]] && continue
+    units+=("${unit_name}")
+  done < <(systemctl list-units --all --plain --no-legend 'et312-rfcomm-*.service' 'et312-mqtt-bridge-*.service' | awk '{print $1}')
 
-  if systemctl list-unit-files "${RFCOMM_SERVICE_NAME}.service" >/dev/null 2>&1; then
-    systemctl stop "${RFCOMM_SERVICE_NAME}" || true
-  fi
+  units+=("${legacy_units[@]}")
+
+  systemctl stop "${units[@]}" >/dev/null 2>&1 || true
 }
 
 install_system_packages() {
   export DEBIAN_FRONTEND=noninteractive
   apt-get update
-  apt-get install -y python3 python3-venv python3-pip rsync
+  apt-get install -y python3 python3-venv python3-pip rsync bluez bluez-tools rfkill
 }
 
 ensure_service_user() {
   if ! id -u "${SERVICE_USER}" >/dev/null 2>&1; then
-    useradd --system --create-home --home-dir "/var/lib/${SERVICE_NAME}" --shell /usr/sbin/nologin "${SERVICE_USER}"
+    useradd --system --create-home --home-dir "/var/lib/et312" --shell /usr/sbin/nologin "${SERVICE_USER}"
   fi
 
   usermod -a -G dialout "${SERVICE_USER}" || true
@@ -137,35 +150,102 @@ sync_app_files() {
   fi
 
   find "${INSTALL_DIR}/scripts" -maxdepth 1 -type f -name '*.sh' -exec chmod 0755 {} +
+  chmod 0755 "${INSTALL_DIR}/scripts/et312_rpi_manager.py"
   chown -R root:root "${INSTALL_DIR}"
 
   if [[ -d "${INSTALL_DIR}/config" ]]; then
     chown root:"${SERVICE_USER}" "${INSTALL_DIR}/config"
     chmod 0750 "${INSTALL_DIR}/config"
-    find "${INSTALL_DIR}/config" -maxdepth 1 -type f -exec chown root:"${SERVICE_USER}" {} +
-    find "${INSTALL_DIR}/config" -maxdepth 1 -type f -exec chmod 0640 {} +
+    if [[ -d "${INSTALL_DIR}/config/devices" ]]; then
+      chown root:"${SERVICE_USER}" "${INSTALL_DIR}/config/devices"
+      chmod 0750 "${INSTALL_DIR}/config/devices"
+    fi
+    find "${INSTALL_DIR}/config" -type f -exec chown root:"${SERVICE_USER}" {} +
+    find "${INSTALL_DIR}/config" -type f -exec chmod 0640 {} +
   fi
 }
 
-start_services() {
+run_discovery() {
+  if [[ "${RUN_DISCOVERY}" != "1" ]]; then
+    return
+  fi
+
+  rfkill unblock bluetooth || true
+  systemctl enable --now bluetooth
+
+  "${INSTALL_DIR}/.venv/bin/python" \
+    "${INSTALL_DIR}/scripts/et312_rpi_manager.py" \
+    --install-dir "${INSTALL_DIR}" \
+    discover-bluetooth >/dev/null
+}
+
+generate_units() {
+  "${INSTALL_DIR}/.venv/bin/python" \
+    "${INSTALL_DIR}/scripts/et312_rpi_manager.py" \
+    --install-dir "${INSTALL_DIR}" \
+    --systemd-dir "${SYSTEMD_DIR}" \
+    ensure-layout
+
+  "${INSTALL_DIR}/.venv/bin/python" \
+    "${INSTALL_DIR}/scripts/et312_rpi_manager.py" \
+    --install-dir "${INSTALL_DIR}" \
+    --systemd-dir "${SYSTEMD_DIR}" \
+    migrate-legacy-config >/dev/null || true
+
+  "${INSTALL_DIR}/.venv/bin/python" \
+    "${INSTALL_DIR}/scripts/et312_rpi_manager.py" \
+    --install-dir "${INSTALL_DIR}" \
+    --systemd-dir "${SYSTEMD_DIR}" \
+    generate-units
+}
+
+enable_and_start_units() {
+  local units="$1"
   systemctl daemon-reload
 
-  if systemctl list-unit-files "${RFCOMM_SERVICE_NAME}.service" >/dev/null 2>&1; then
-    systemctl start "${RFCOMM_SERVICE_NAME}"
+  if [[ -z "${units}" ]]; then
+    return
   fi
 
-  if systemctl list-unit-files "${SERVICE_NAME}.service" >/dev/null 2>&1; then
-    systemctl start "${SERVICE_NAME}"
-  fi
+  while IFS= read -r unit_name; do
+    [[ -z "${unit_name}" ]] && continue
+    systemctl enable "${unit_name}" >/dev/null
+  done <<< "${units}"
+
+  while IFS= read -r unit_name; do
+    [[ -z "${unit_name}" ]] && continue
+    if [[ "${unit_name}" == et312-rfcomm-* ]]; then
+      systemctl restart "${unit_name}"
+    fi
+  done <<< "${units}"
+
+  while IFS= read -r unit_name; do
+    [[ -z "${unit_name}" ]] && continue
+    if [[ "${unit_name}" == et312-mqtt-bridge-* ]]; then
+      systemctl restart "${unit_name}"
+    fi
+  done <<< "${units}"
+}
+
+disable_legacy_units() {
+  local legacy_units=(
+    "et312-rfcomm.service"
+    "et312-mqtt-bridge.service"
+  )
+
+  systemctl disable --now "${legacy_units[@]}" >/dev/null 2>&1 || true
+  rm -f "${SYSTEMD_DIR}/et312-rfcomm.service" "${SYSTEMD_DIR}/et312-mqtt-bridge.service"
+  systemctl daemon-reload
 }
 
 print_summary() {
   echo
-  echo "ET312 bridge update complete."
+  echo "ET312 multi-device bridge update complete."
   echo
   echo "Useful commands:"
-  echo "  sudo systemctl status ${RFCOMM_SERVICE_NAME} ${SERVICE_NAME}"
-  echo "  sudo journalctl -u ${RFCOMM_SERVICE_NAME} -u ${SERVICE_NAME} -f"
+  echo "  sudo systemctl list-units 'et312-*'"
+  echo "  sudo journalctl -u 'et312-rfcomm-*' -u 'et312-mqtt-bridge-*' -f"
+  echo "  sudo ${INSTALL_DIR}/.venv/bin/python ${INSTALL_DIR}/scripts/et312_rpi_manager.py --install-dir ${INSTALL_DIR} list-device-ids"
 }
 
 main() {
@@ -176,7 +256,14 @@ main() {
   install_system_packages
   ensure_service_user
   sync_app_files
-  start_services
+  "${INSTALL_DIR}/.venv/bin/python" \
+    "${INSTALL_DIR}/scripts/et312_rpi_manager.py" \
+    --install-dir "${INSTALL_DIR}" \
+    migrate-legacy-config >/dev/null || true
+  run_discovery
+  generated_units="$(generate_units)"
+  disable_legacy_units
+  enable_and_start_units "${generated_units}"
   print_summary
 }
 
