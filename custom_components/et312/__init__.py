@@ -64,8 +64,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     if entry.data.get(CONF_CONNECTION_TYPE) == CONNECTION_MQTT:
         manager = ET312MqttDiscoveryManager(hass, entry)
-        await manager.async_start()
         hass.data.setdefault(DOMAIN, {})[entry.entry_id] = manager
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await manager.async_start()
+        return True
     else:
         client = ET312Client(ET312ConnectionConfig.from_mapping(entry.data), hass=hass)
         coordinator = ET312DataUpdateCoordinator(hass, client=client, entry=entry)

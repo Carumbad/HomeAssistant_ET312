@@ -20,6 +20,7 @@ from .const import (
     SIGNAL_DEVICE_UPDATED,
 )
 from .et312 import ET312State
+from .mqtt_payload import payload_to_text
 from .topics import normalize_device_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -128,8 +129,8 @@ class ET312MqttDiscoveryManager:
         if device_id is None:
             return
         try:
-            payload = json.loads(msg.payload)
-        except json.JSONDecodeError:
+            payload = json.loads(payload_to_text(msg.payload))
+        except (TypeError, json.JSONDecodeError):
             _LOGGER.debug("Ignoring invalid ET312 state payload on %s", msg.topic)
             return
 
@@ -146,7 +147,7 @@ class ET312MqttDiscoveryManager:
         device_id = self._topic_device_id(msg.topic, "availability")
         if device_id is None:
             return
-        text = str(msg.payload).strip().lower()
+        text = payload_to_text(msg.payload).strip().lower()
         is_online = text == "online"
         existing = self.devices.get(device_id, self._default_state())
         updated = replace(existing, connected=is_online)

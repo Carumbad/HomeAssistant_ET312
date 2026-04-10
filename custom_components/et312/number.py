@@ -69,7 +69,7 @@ async def async_setup_entry(
     runtime = hass.data[DOMAIN][entry.entry_id]
     if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_MQTT:
         coordinator: ET312DataUpdateCoordinator = runtime
-        async_add_entities(ET312PowerNumber(coordinator, description) for description in NUMBERS)
+        async_add_entities([ET312PowerNumber(coordinator, description) for description in NUMBERS])
         return
 
     manager: ET312MqttDiscoveryManager = runtime
@@ -80,12 +80,11 @@ async def async_setup_entry(
             return
         known.add(device_id)
         async_add_entities(
-            ET312DiscoveredPowerNumber(manager, device_id, description)
-            for description in NUMBERS
+            [
+                ET312DiscoveredPowerNumber(manager, device_id, description)
+                for description in NUMBERS
+            ]
         )
-
-    for device_id in sorted(manager.devices):
-        add_for_device(device_id)
 
     entry.async_on_unload(
         async_dispatcher_connect(
@@ -94,6 +93,9 @@ async def async_setup_entry(
             add_for_device,
         )
     )
+
+    for device_id in sorted(manager.devices):
+        add_for_device(device_id)
 
 
 class ET312PowerNumber(ET312CoordinatorEntity, NumberEntity):

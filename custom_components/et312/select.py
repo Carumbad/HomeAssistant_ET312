@@ -35,9 +35,6 @@ async def async_setup_entry(
         known.add(device_id)
         async_add_entities([ET312DiscoveredModeSelect(manager, device_id)])
 
-    for device_id in sorted(manager.devices):
-        add_for_device(device_id)
-
     entry.async_on_unload(
         async_dispatcher_connect(
             hass,
@@ -45,6 +42,9 @@ async def async_setup_entry(
             add_for_device,
         )
     )
+
+    for device_id in sorted(manager.devices):
+        add_for_device(device_id)
 
 
 class ET312ModeSelect(ET312CoordinatorEntity, SelectEntity):

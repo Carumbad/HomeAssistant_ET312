@@ -81,7 +81,7 @@ class ET312DiscoveredEntity(Entity):
             identifiers={(DOMAIN, self.device_id)},
             manufacturer="ErosTek",
             model="ET312",
-            name=f"ET312 {self.device_id}",
+            name=self.device_id,
         )
 
     def _handle_manager_update(self, updated_device_id: str) -> None:

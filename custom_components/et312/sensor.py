@@ -15,6 +15,10 @@ from .mqtt_manager import ET312MqttDiscoveryManager
 
 SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
+        key="status",
+        name="Status",
+    ),
+    SensorEntityDescription(
         key="mode",
         name="Mode",
     ),
@@ -47,7 +51,7 @@ async def async_setup_entry(
     runtime = hass.data[DOMAIN][entry.entry_id]
     if entry.data.get(CONF_CONNECTION_TYPE) != CONNECTION_MQTT:
         coordinator: ET312DataUpdateCoordinator = runtime
-        async_add_entities(ET312Sensor(coordinator, description) for description in SENSORS)
+        async_add_entities([ET312Sensor(coordinator, description) for description in SENSORS])
         return
 
     manager: ET312MqttDiscoveryManager = runtime
@@ -58,12 +62,8 @@ async def async_setup_entry(
             return
         known.add(device_id)
         async_add_entities(
-            ET312DiscoveredSensor(manager, device_id, description)
-            for description in SENSORS
+            [ET312DiscoveredSensor(manager, device_id, description) for description in SENSORS]
         )
-
-    for device_id in sorted(manager.devices):
-        add_for_device(device_id)
 
     entry.async_on_unload(
         async_dispatcher_connect(
@@ -72,6 +72,9 @@ async def async_setup_entry(
             add_for_device,
         )
     )
+
+    for device_id in sorted(manager.devices):
+        add_for_device(device_id)
 
 
 class ET312Sensor(ET312CoordinatorEntity, SensorEntity):
@@ -90,6 +93,8 @@ class ET312Sensor(ET312CoordinatorEntity, SensorEntity):
     @property
     def native_value(self) -> str | int | None:
         """Return the sensor state."""
+        if self.entity_description.key == "status":
+            return "online" if self.coordinator.data.connected else "offline"
         return getattr(self.coordinator.data, self.entity_description.key)
 
 
@@ -113,4 +118,13 @@ class ET312DiscoveredSensor(ET312DiscoveredEntity, SensorEntity):
         state = self.device_state
         if state is None:
             return None
+        if self.entity_description.key == "status":
+            return "online" if state.connected else "offline"
         return getattr(state, self.entity_description.key)
+
+    @property
+    def available(self) -> bool:
+        """Keep the status sensor visible when the ET312 reports offline."""
+        if self.entity_description.key == "status":
+            return self.device_state is not None
+        return super().available
