@@ -336,6 +336,12 @@ enable_and_start_units() {
   done <<< "${units}"
 }
 
+disable_legacy_units() {
+  systemctl disable --now et312-rfcomm.service et312-mqtt-bridge.service >/dev/null 2>&1 || true
+  rm -f "${SYSTEMD_DIR}/et312-rfcomm.service" "${SYSTEMD_DIR}/et312-mqtt-bridge.service"
+  systemctl daemon-reload
+}
+
 print_summary() {
   local device_ids
   device_ids="$("${INSTALL_DIR}/.venv/bin/python" \
@@ -375,6 +381,7 @@ main() {
   register_initial_serial_device
   fix_config_permissions
   generated_units="$(generate_units)"
+  disable_legacy_units
   enable_and_start_units "${generated_units}"
   print_summary
 }

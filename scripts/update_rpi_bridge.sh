@@ -99,14 +99,18 @@ pull_latest() {
 
 stop_services() {
   local units=()
+  local legacy_units=(
+    "et312-rfcomm.service"
+    "et312-mqtt-bridge.service"
+  )
   while IFS= read -r unit_name; do
     [[ -z "${unit_name}" ]] && continue
     units+=("${unit_name}")
   done < <(systemctl list-units --all --plain --no-legend 'et312-rfcomm-*.service' 'et312-mqtt-bridge-*.service' | awk '{print $1}')
 
-  if (( ${#units[@]} )); then
-    systemctl stop "${units[@]}" || true
-  fi
+  units+=("${legacy_units[@]}")
+
+  systemctl stop "${units[@]}" >/dev/null 2>&1 || true
 }
 
 install_system_packages() {
@@ -223,6 +227,17 @@ enable_and_start_units() {
   done <<< "${units}"
 }
 
+disable_legacy_units() {
+  local legacy_units=(
+    "et312-rfcomm.service"
+    "et312-mqtt-bridge.service"
+  )
+
+  systemctl disable --now "${legacy_units[@]}" >/dev/null 2>&1 || true
+  rm -f "${SYSTEMD_DIR}/et312-rfcomm.service" "${SYSTEMD_DIR}/et312-mqtt-bridge.service"
+  systemctl daemon-reload
+}
+
 print_summary() {
   echo
   echo "ET312 multi-device bridge update complete."
@@ -247,6 +262,7 @@ main() {
     migrate-legacy-config >/dev/null || true
   run_discovery
   generated_units="$(generate_units)"
+  disable_legacy_units
   enable_and_start_units "${generated_units}"
   print_summary
 }
