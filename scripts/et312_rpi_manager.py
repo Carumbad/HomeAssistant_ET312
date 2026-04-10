@@ -152,6 +152,11 @@ def write_env_file(path: Path, values: dict[str, str]) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def log(message: str) -> None:
+    """Write a manager log line to stderr."""
+    print(f"[et312-rpi-manager] {message}", file=sys.stderr, flush=True)
+
+
 def install_paths(install_dir: Path) -> dict[str, Path]:
     """Return important install/config paths."""
     config_dir = install_dir / "config"
@@ -760,7 +765,7 @@ def discover_bluetooth_devices(
             continue
 
         rfcomm_device = next_rfcomm_device(install_dir)
-        last_error: Exception | None = None
+        candidate_succeeded = False
         for mac, name in candidates:
             pair_and_trust_device(mac)
             rfcomm_channel = detect_rfcomm_channel(mac)
@@ -771,7 +776,9 @@ def discover_bluetooth_devices(
                     rfcomm_channel=rfcomm_channel,
                 )
             except Exception as err:
-                last_error = err
+                log(
+                    f"Skipping candidate {mac} ({name}) for {resolved_id}: {err}"
+                )
                 continue
 
             register_bluetooth_device(
@@ -783,10 +790,11 @@ def discover_bluetooth_devices(
                 device_id=resolved_id,
             )
             registered_ids.append(resolved_id)
+            candidate_succeeded = True
             break
-        else:
-            if last_error is not None:
-                raise last_error
+
+        if not candidate_succeeded:
+            log(f"No working ET312 candidate confirmed for {resolved_id}")
     return registered_ids
 
 
