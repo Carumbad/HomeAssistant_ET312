@@ -26,7 +26,7 @@ Options:
   --discover                 Scan, pair, interrogate, and register matching ET312s.
   --mac MAC                  Bluetooth MAC address for one ET312 device.
   --rfcomm-device PATH       Serial mapping to create, e.g. /dev/rfcomm0.
-  --rfcomm-channel CHANNEL   RFCOMM channel. Defaults to SDP autodetect.
+  --rfcomm-channel CHANNEL   RFCOMM channel. Defaults to 2 for ET312 devices.
   --scan-seconds SECONDS     Discovery scan duration. Uses shared config if omitted.
   --name-patterns CSV        Discovery name fragments, e.g. Micro,312.
   --device-id ID             Optional stable id override for --mac mode.
@@ -197,10 +197,7 @@ register_one_device() {
   bluetoothctl pair "${ET312_MAC}" >/dev/null 2>&1 || true
   bluetoothctl trust "${ET312_MAC}" >/dev/null 2>&1 || true
 
-  if [[ -z "${channel}" ]]; then
-    channel="$(sdptool search --bdaddr "${ET312_MAC}" SP 2>/dev/null | awk '/Channel:/ {print $2; exit}')"
-    channel="${channel:-2}"
-  fi
+  channel="${channel:-2}"
 
   if [[ -z "${rfcomm_device}" ]]; then
     rfcomm_device="$("${INSTALL_DIR}/.venv/bin/python" \

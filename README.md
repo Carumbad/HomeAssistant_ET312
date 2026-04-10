@@ -275,7 +275,8 @@ Important:
   only saves devices that actually answer like an ET312
 - if one physical ET312 exposes more than one nearby Bluetooth identity,
   discovery keeps only one saved device entry for that ET312 id
-- on the hardware we tested, the serial service was on RFCOMM channel `2`
+- the Pi scripts now assume ET312 devices use RFCOMM channel `2`
+- SDP is only used as a sanity check during discovery/debugging
 
 Discovery creates or refreshes per-device env files under:
 

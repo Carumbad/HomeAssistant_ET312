@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from scripts.et312_rpi_manager import (
+    DEFAULT_ET312_RFCOMM_CHANNEL,
     bluetooth_alias_role,
     bridge_topic_defaults,
+    detect_rfcomm_channel,
     device_config_path,
     device_id_from_mac,
     next_rfcomm_device,
@@ -159,3 +162,12 @@ class RpiManagerTests(unittest.TestCase):
                 "BE:B9:A5:7D:4F:FB": "Micro312 - Audio",
             },
         )
+
+    def test_detect_rfcomm_channel_uses_et312_default_even_if_sdp_differs(self) -> None:
+        """ET312 discovery should prefer the fixed channel 2 over SDP drift."""
+        with patch("scripts.et312_rpi_manager.run_command") as run_command:
+            run_command.return_value.stdout = "Channel: 5\n"
+            self.assertEqual(
+                detect_rfcomm_channel("BE:B9:A5:7D:4F:FB"),
+                DEFAULT_ET312_RFCOMM_CHANNEL,
+            )

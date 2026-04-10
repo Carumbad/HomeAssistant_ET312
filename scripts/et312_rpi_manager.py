@@ -49,6 +49,7 @@ DEFAULT_POST_SYNC_DELAY = 0.2
 DEFAULT_KEY_TIMEOUT = 1.5
 DEFAULT_CONNECT_RETRIES = 4
 DEFAULT_RECONNECT_DELAY = 3.0
+DEFAULT_ET312_RFCOMM_CHANNEL = "2"
 BLUETOOTHCTL_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
 BLUETOOTHCTL_NAME_FIELDS = (
     "alias:",
@@ -773,12 +774,16 @@ def trust_and_disconnect_device(mac: str) -> None:
 
 
 def detect_rfcomm_channel(mac: str) -> str:
-    """Detect an RFCOMM serial-port channel for a Bluetooth device."""
+    """Return the expected ET312 RFCOMM channel and log SDP mismatches."""
     result = run_command(["sdptool", "search", "--bdaddr", mac, "SP"], check=False)
     match = re.search(r"Channel:\s+(\d+)", result.stdout)
-    if match:
-        return match.group(1)
-    return "2"
+    if match and match.group(1) != DEFAULT_ET312_RFCOMM_CHANNEL:
+        log(
+            "SDP reported RFCOMM channel "
+            f"{match.group(1)} for {mac}; using ET312 default channel "
+            f"{DEFAULT_ET312_RFCOMM_CHANNEL}"
+        )
+    return DEFAULT_ET312_RFCOMM_CHANNEL
 
 
 def wait_for_path(path: Path, timeout: float) -> bool:

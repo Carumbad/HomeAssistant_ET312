@@ -30,7 +30,7 @@ set +a
 : "${ET312_BLUETOOTH_MAC:?ET312_BLUETOOTH_MAC must be set}"
 
 RFCOMM_DEVICE="${RFCOMM_DEVICE:-/dev/rfcomm0}"
-RFCOMM_CHANNEL="${RFCOMM_CHANNEL:-1}"
+RFCOMM_CHANNEL="${RFCOMM_CHANNEL:-2}"
 RFCOMM_ID="${RFCOMM_DEVICE#/dev/rfcomm}"
 
 if [[ ! "${RFCOMM_ID}" =~ ^[0-9]+$ ]]; then
