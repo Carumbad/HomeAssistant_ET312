@@ -11,6 +11,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .const import DEFAULT_SCAN_INTERVAL_SECONDS, DOMAIN
 from .et312 import ET312Client, ET312ConnectionError, ET312State
+from .topics import entry_device_id
 
 
 class ET312DataUpdateCoordinator(DataUpdateCoordinator[ET312State]):
@@ -32,6 +33,7 @@ class ET312DataUpdateCoordinator(DataUpdateCoordinator[ET312State]):
         )
         self.client = client
         self.entry = entry
+        self.device_uid = entry_device_id(entry.data)
 
     async def _async_update_data(self) -> ET312State:
         """Fetch data from the ET312 device."""

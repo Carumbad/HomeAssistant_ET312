@@ -1003,58 +1003,35 @@ def discover_bluetooth_devices(
         if preferred_pair_mac:
             pair_candidates.sort(key=lambda candidate: candidate[0] != preferred_pair_mac)
 
-        if existing:
-            known_rfcomm = (
-                next(
-                    (
-                        candidate
-                        for candidate in rfcomm_candidates
-                        if candidate[0] == existing.get("ET312_BLUETOOTH_MAC")
-                    ),
-                    None,
-                )
-                or (rfcomm_candidates[0] if rfcomm_candidates else candidates[0])
-            )
-            known_pair = (
-                next(
-                    (
-                        candidate
-                        for candidate in pair_candidates
-                        if candidate[0] == existing.get("ET312_BLUETOOTH_PAIR_MAC")
-                    ),
-                    None,
-                )
-                or (pair_candidates[0] if pair_candidates else None)
-            )
-            register_bluetooth_device(
-                install_dir,
-                mac=known_rfcomm[0],
-                rfcomm_device=existing.get("RFCOMM_DEVICE", next_rfcomm_device(install_dir)),
-                rfcomm_channel=existing.get("RFCOMM_CHANNEL", detect_rfcomm_channel(known_rfcomm[0])),
-                bluetooth_name=known_rfcomm[1],
-                pair_mac=(known_pair[0] if known_pair else existing.get("ET312_BLUETOOTH_PAIR_MAC")),
-                pair_name=(known_pair[1] if known_pair else existing.get("ET312_BLUETOOTH_PAIR_NAME")),
-                device_id=resolved_id,
-            )
-            registered_ids.append(resolved_id)
-            continue
-
-        rfcomm_device = next_rfcomm_device(install_dir)
+        rfcomm_device = existing.get("RFCOMM_DEVICE") if existing else None
+        if not rfcomm_device:
+            rfcomm_device = next_rfcomm_device(install_dir)
+        probe_rfcomm_device = next_rfcomm_device(install_dir)
         candidate_succeeded = False
         chosen_pair: tuple[str, str] | None = pair_candidates[0] if pair_candidates else None
+        if existing and not chosen_pair:
+            existing_pair_mac = existing.get("ET312_BLUETOOTH_PAIR_MAC")
+            existing_pair_name = existing.get("ET312_BLUETOOTH_PAIR_NAME")
+            if existing_pair_mac and existing_pair_name:
+                chosen_pair = (existing_pair_mac, existing_pair_name)
         if chosen_pair:
             log(f"Pairing and trusting alias {chosen_pair[0]} ({chosen_pair[1]}) for {resolved_id}")
             pair_and_trust_device(chosen_pair[0])
             trust_and_disconnect_device(chosen_pair[0])
 
-        for mac, name in rfcomm_candidates or candidates:
+        candidate_order: list[tuple[str, str]] = list(rfcomm_candidates)
+        for candidate in candidates:
+            if candidate not in candidate_order:
+                candidate_order.append(candidate)
+
+        for mac, name in candidate_order:
             if mac != (chosen_pair[0] if chosen_pair else None):
                 trust_and_disconnect_device(mac)
             rfcomm_channel = detect_rfcomm_channel(mac)
             try:
                 interrogate_bluetooth_candidate(
                     mac=mac,
-                    rfcomm_device=rfcomm_device,
+                    rfcomm_device=probe_rfcomm_device,
                     rfcomm_channel=rfcomm_channel,
                 )
             except Exception as err:
@@ -1069,8 +1046,16 @@ def discover_bluetooth_devices(
                 rfcomm_device=rfcomm_device,
                 rfcomm_channel=rfcomm_channel,
                 bluetooth_name=name,
-                pair_mac=(chosen_pair[0] if chosen_pair else None),
-                pair_name=(chosen_pair[1] if chosen_pair else None),
+                pair_mac=(
+                    chosen_pair[0]
+                    if chosen_pair
+                    else existing.get("ET312_BLUETOOTH_PAIR_MAC") if existing else None
+                ),
+                pair_name=(
+                    chosen_pair[1]
+                    if chosen_pair
+                    else existing.get("ET312_BLUETOOTH_PAIR_NAME") if existing else None
+                ),
                 device_id=resolved_id,
             )
             registered_ids.append(resolved_id)
@@ -1078,6 +1063,27 @@ def discover_bluetooth_devices(
             break
 
         if not candidate_succeeded:
+            if existing:
+                log(
+                    "No working ET312 candidate confirmed for "
+                    f"{resolved_id}; keeping existing mapping "
+                    f"{existing.get('ET312_BLUETOOTH_MAC', '<unknown>')}"
+                )
+                register_bluetooth_device(
+                    install_dir,
+                    mac=existing.get("ET312_BLUETOOTH_MAC", candidates[0][0]),
+                    rfcomm_device=rfcomm_device,
+                    rfcomm_channel=existing.get("RFCOMM_CHANNEL", DEFAULT_ET312_RFCOMM_CHANNEL),
+                    bluetooth_name=existing.get(
+                        "ET312_BLUETOOTH_NAME",
+                        candidates[0][1],
+                    ),
+                    pair_mac=existing.get("ET312_BLUETOOTH_PAIR_MAC"),
+                    pair_name=existing.get("ET312_BLUETOOTH_PAIR_NAME"),
+                    device_id=resolved_id,
+                )
+                registered_ids.append(resolved_id)
+                continue
             log(f"No working ET312 candidate confirmed for {resolved_id}")
     return registered_ids
 
