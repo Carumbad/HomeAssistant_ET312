@@ -77,6 +77,20 @@ deployment styles:
 - `serial`: the ET312 is plugged directly into the Home Assistant host
 - `mqtt`: a remote Python bridge handles serial and exposes the device over MQTT
 
+On the Raspberry Pi bridge host, the `0.5.x` refactor moves toward a
+multi-device layout:
+
+- one shared install under `/opt/et312-mqtt-bridge`
+- one shared bridge config and one shared discovery config
+- one per-device config file under `/opt/et312-mqtt-bridge/config/devices/`
+- one RFCOMM unit and one MQTT bridge unit per discovered ET312
+
+Bluetooth-backed device ids use the last 6 hex characters of the chosen MAC,
+for example `ET312_7D4FFB`. Discovery also de-duplicates alias Bluetooth
+identities that appear to represent the same physical ET312, so one box should
+not be registered twice just because BlueZ exposes more than one nearby `Micro`
+identity for it.
+
 For the `serial` path, the integration assumes the user provides a working
 serial device path such as `/dev/ttyUSB0`, `/dev/ttyACM0`, or a Bluetooth-backed
 `/dev/tty*` device exposed by the host OS.
@@ -88,8 +102,14 @@ directly.
 
 ## MQTT Bridge Contract
 
-The bridge publishes retained state JSON to a state topic, for example
-`et312/state`:
+The bridge publishes retained state JSON to a state topic. In a multi-device Pi
+install, the default topic layout is per-device, for example:
+
+- `et312/ET312_8EE738/state`
+- `et312/ET312_8EE738/command`
+- `et312/ET312_8EE738/availability`
+
+State payload example:
 
 ```json
 {
@@ -105,11 +125,10 @@ The bridge publishes retained state JSON to a state topic, for example
 }
 ```
 
-It publishes availability to an availability topic, for example
-`et312/availability`, using `online` and `offline`.
+It publishes availability to the matching availability topic using `online` and
+`offline`.
 
-Home Assistant publishes JSON commands to a command topic, for example
-`et312/command`:
+Home Assistant publishes JSON commands to the matching command topic:
 
 ```json
 {"command": "set_mode", "mode": "Waves"}
@@ -149,7 +168,7 @@ prints any response bytes, which is useful for debugging Bluetooth serial links.
 
 ## MQTT Bridge Script
 
-The MQTT bridge script lives at `scripts/et312_mqtt_bridge.py`.
+The MQTT bridge process lives at `scripts/et312_mqtt_bridge.py`.
 
 Install its Python dependencies on the bridge host:
 
@@ -185,7 +204,7 @@ sudo apt-get update
 sudo apt-get install -y git
 git clone https://github.com/Carumbad/HomeAssistant_ET312.git
 cd HomeAssistant_ET312
-sudo ./scripts/install_rpi_bridge.sh --device /dev/ttyUSB0 --mqtt-host 192.168.1.20
+sudo ./scripts/install_rpi_bridge.sh --mqtt-host 192.168.1.20
 ```
 
 The installer:
@@ -194,8 +213,16 @@ The installer:
 - copies this project into `/opt/et312-mqtt-bridge`
 - creates an `et312` system user
 - grants that user access to `dialout`
-- writes bridge settings to `/opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env`
-- installs and starts a `systemd` service
+- writes shared bridge settings to `/opt/et312-mqtt-bridge/config/et312-bridge.env`
+- writes shared discovery settings to `/opt/et312-mqtt-bridge/config/et312-discovery.env`
+- prepares `/opt/et312-mqtt-bridge/config/devices/` for per-device configs
+
+If you want to register a directly attached serial device immediately, you can
+still do that during install:
+
+```bash
+sudo ./scripts/install_rpi_bridge.sh --mqtt-host 192.168.1.20 --device /dev/ttyUSB0
+```
 
 If you rerun the bridge installer, it reuses the existing virtualenv and only
 downloads Python packages when `pyserial` or `paho-mqtt` are missing. It also
@@ -205,10 +232,11 @@ RFCOMM settings are not overwritten by the bridge install step.
 After install, useful commands are:
 
 ```bash
-sudo systemctl status et312-mqtt-bridge
-sudo journalctl -u et312-mqtt-bridge -f
-sudo editor /opt/et312-mqtt-bridge/config/et312-mqtt-bridge.env
-sudo systemctl restart et312-mqtt-bridge
+sudo systemctl list-units 'et312-*'
+sudo journalctl -u 'et312-rfcomm-*' -u 'et312-mqtt-bridge-*' -f
+sudo editor /opt/et312-mqtt-bridge/config/et312-bridge.env
+sudo editor /opt/et312-mqtt-bridge/config/et312-discovery.env
+sudo ls /opt/et312-mqtt-bridge/config/devices
 ```
 
 For routine bridge updates on the Pi, use:
@@ -219,48 +247,66 @@ sudo ./scripts/update_rpi_bridge.sh
 ```
 
 That updater pulls the latest checked-out branch, refreshes
-`/opt/et312-mqtt-bridge`, preserves the existing config files, and cleanly
-restarts `et312-rfcomm` and `et312-mqtt-bridge` in the correct order.
+`/opt/et312-mqtt-bridge`, preserves the existing config files, regenerates the
+per-device units, and cleanly restarts all configured ET312 instances.
+
+If you want the updater to run Bluetooth discovery before restarting units:
+
+```bash
+cd ~/HomeAssistant_ET312
+sudo ./scripts/update_rpi_bridge.sh --discover
+```
 
 ## Raspberry Pi Bluetooth Serial Setup
 
 If the ET312 will connect to the Pi over Bluetooth instead of USB serial, there
-is a separate helper script for the Bluetooth stack and RFCOMM mapping:
+is a separate helper script for the Bluetooth stack, discovery, and RFCOMM
+mapping:
+
+```bash
+sudo ./scripts/install_rpi_bluetooth_serial.sh --discover
+```
+
+Important:
+
+- discovery starts by scanning for Bluetooth names that match the shared
+  discovery fragments, currently `Micro,312`
+- discovery then interrogates each candidate over a temporary RFCOMM link and
+  only saves devices that actually answer like an ET312
+- if one physical ET312 exposes more than one nearby Bluetooth identity,
+  discovery keeps only one saved device entry for that ET312 id
+- on the hardware we tested, the serial service was on RFCOMM channel `2`
+
+Discovery creates or refreshes per-device env files under:
+
+```text
+/opt/et312-mqtt-bridge/config/devices/ET312_XXXXXX.env
+```
+
+Each saved Bluetooth device then gets:
+
+- one RFCOMM unit such as `et312-rfcomm-ET312_8EE738.service`
+- one bridge unit such as `et312-mqtt-bridge-ET312_8EE738.service`
+
+If you already know a Bluetooth MAC and want to register that device directly:
 
 ```bash
 sudo ./scripts/install_rpi_bluetooth_serial.sh --mac AA:BB:CC:DD:EE:FF
 ```
 
-Important:
-
-- use the MAC for `Micro312 - Audio`, not `Micro312 - SPP`
-- the ET312's Serial Port service is exposed on the Audio identity
-- the script will try to autodetect the RFCOMM channel with `sdptool`
-- on the hardware we tested, the serial service was on RFCOMM channel `2`
-
-That script:
-
-- installs the BlueZ Bluetooth stack
-- enables the Pi Bluetooth service
-- pairs, trusts, and connects to the ET312 with `bluetoothctl`
-- creates a persistent `rfcomm` mapping service
-- exposes the ET312 as a serial device such as `/dev/rfcomm0`
-
 Useful Bluetooth commands afterward:
 
 ```bash
-sudo systemctl status et312-rfcomm
-sudo journalctl -u et312-rfcomm -f
+sudo systemctl list-units 'et312-*'
+sudo journalctl -u 'et312-rfcomm-*' -u 'et312-mqtt-bridge-*' -f
 sudo rfcomm
-ls -l /dev/rfcomm0
-```
-
-Once `/dev/rfcomm0` is working, you can use it with the bridge installer:
-
-```bash
-sudo ./scripts/install_rpi_bridge.sh --device /dev/rfcomm0 --mqtt-host 192.168.1.20
+ls -l /dev/rfcomm*
 ```
 
 For Bluetooth serial, the bridge installer defaults are intentionally more
 patient than the wired case: longer startup delay, more sync attempts, and
 reconnect retries before giving up.
+
+For Home Assistant, add one MQTT ET312 integration entry per saved bridge
+device and point each entry at that device's state, command, and availability
+topics.
