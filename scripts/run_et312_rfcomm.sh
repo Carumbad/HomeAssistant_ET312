@@ -14,6 +14,15 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DISCOVERY_CONFIG_FILE="${SCRIPT_DIR}/../config/et312-discovery.env"
+
+if [[ -f "${DISCOVERY_CONFIG_FILE}" ]]; then
+  set -a
+  source "${DISCOVERY_CONFIG_FILE}"
+  set +a
+fi
+
 set -a
 source "${CONFIG_FILE}"
 set +a

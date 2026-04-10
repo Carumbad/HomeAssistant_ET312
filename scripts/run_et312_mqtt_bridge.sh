@@ -14,12 +14,41 @@ if [[ ! -f "${CONFIG_FILE}" ]]; then
   exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SHARED_CONFIG_FILE="${SCRIPT_DIR}/../config/et312-bridge.env"
+
+if [[ -f "${SHARED_CONFIG_FILE}" ]]; then
+  set -a
+  source "${SHARED_CONFIG_FILE}"
+  set +a
+fi
+
 set -a
 source "${CONFIG_FILE}"
 set +a
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${SCRIPT_DIR}/../.venv/bin/python"
+MQTT_TOPIC_PREFIX="${MQTT_TOPIC_PREFIX:-et312}"
+DEVICE_ID="${DEVICE_ID:-}"
+DEVICE="${DEVICE:-${RFCOMM_DEVICE:-}}"
+if [[ -z "${DEVICE}" ]]; then
+  echo "DEVICE must be set in ${CONFIG_FILE}" >&2
+  exit 1
+fi
+if [[ -z "${STATE_TOPIC:-}" && -n "${MQTT_STATE_TOPIC:-}" ]]; then
+  STATE_TOPIC="${MQTT_STATE_TOPIC}"
+fi
+if [[ -z "${COMMAND_TOPIC:-}" && -n "${MQTT_COMMAND_TOPIC:-}" ]]; then
+  COMMAND_TOPIC="${MQTT_COMMAND_TOPIC}"
+fi
+if [[ -z "${AVAILABILITY_TOPIC:-}" && -n "${MQTT_AVAILABILITY_TOPIC:-}" ]]; then
+  AVAILABILITY_TOPIC="${MQTT_AVAILABILITY_TOPIC}"
+fi
+if [[ -n "${DEVICE_ID}" ]]; then
+  STATE_TOPIC="${STATE_TOPIC:-${MQTT_TOPIC_PREFIX}/${DEVICE_ID}/state}"
+  COMMAND_TOPIC="${COMMAND_TOPIC:-${MQTT_TOPIC_PREFIX}/${DEVICE_ID}/command}"
+  AVAILABILITY_TOPIC="${AVAILABILITY_TOPIC:-${MQTT_TOPIC_PREFIX}/${DEVICE_ID}/availability}"
+fi
 EFFECTIVE_STARTUP_DELAY="${STARTUP_DELAY:-1.5}"
 EFFECTIVE_CONNECT_RETRIES="${CONNECT_RETRIES:-4}"
 EFFECTIVE_RECONNECT_DELAY="${RECONNECT_DELAY:-2.0}"
