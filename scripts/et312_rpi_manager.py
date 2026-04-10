@@ -72,6 +72,18 @@ BLUETOOTHCTL_STATUS_FIELDS = (
     "trusted:",
     "uuid:",
 )
+BLUETOOTH_DEVICE_DYNAMIC_KEYS = {
+    "DEVICE",
+    "DEVICE_ID",
+    "DEVICE_NAME",
+    "DEVICE_TRANSPORT",
+    "ET312_BLUETOOTH_MAC",
+    "ET312_BLUETOOTH_NAME",
+    "ET312_BLUETOOTH_PAIR_MAC",
+    "ET312_BLUETOOTH_PAIR_NAME",
+    "RFCOMM_CHANNEL",
+    "RFCOMM_DEVICE",
+}
 
 
 def blocking_sync(
@@ -338,16 +350,18 @@ def load_device_configs(install_dir: Path) -> list[dict[str, str]]:
     return devices
 
 
-def next_rfcomm_device(install_dir: Path) -> str:
-    """Choose the next unused /dev/rfcommN path."""
+def used_rfcomm_indices(
+    install_dir: Path,
+    *,
+    exclude_device_id: str | None = None,
+) -> set[int]:
+    """Return RFCOMM indices already assigned or active."""
     used: set[int] = set()
     for device in load_device_configs(install_dir):
+        if exclude_device_id and device.get("DEVICE_ID") == exclude_device_id:
+            continue
         rfcomm_path = device.get("RFCOMM_DEVICE", "")
         match = re.fullmatch(r"/dev/rfcomm(\d+)", rfcomm_path)
-        if match:
-            used.add(int(match.group(1)))
-    for path in Path("/dev").glob("rfcomm[0-9]*"):
-        match = re.fullmatch(r"rfcomm(\d+)", path.name)
         if match:
             used.add(int(match.group(1)))
     try:
@@ -357,15 +371,51 @@ def next_rfcomm_device(install_dir: Path) -> str:
     if rfcomm_status is not None:
         for match in re.finditer(r"rfcomm(\d+):", rfcomm_status.stdout):
             used.add(int(match.group(1)))
+    return used
+
+
+def next_rfcomm_device(
+    install_dir: Path,
+    *,
+    exclude_device_id: str | None = None,
+) -> str:
+    """Choose the next unused /dev/rfcommN path."""
+    used = used_rfcomm_indices(install_dir, exclude_device_id=exclude_device_id)
     next_idx = 0
     while next_idx in used:
         next_idx += 1
     return f"/dev/rfcomm{next_idx}"
 
 
+def choose_rfcomm_device(
+    install_dir: Path,
+    *,
+    preferred_device: str | None,
+    device_id: str | None,
+) -> str:
+    """Return a unique RFCOMM device path, preferring the supplied slot when safe."""
+    if preferred_device:
+        match = re.fullmatch(r"/dev/rfcomm(\d+)", preferred_device)
+        if match:
+            used = used_rfcomm_indices(install_dir, exclude_device_id=device_id)
+            if int(match.group(1)) not in used:
+                return preferred_device
+    return next_rfcomm_device(install_dir, exclude_device_id=device_id)
+
+
 def bridge_topic_defaults(device_id: str, topic_prefix: str) -> dict[str, str]:
     """Build default MQTT topics for a device."""
     base = f"{topic_prefix.rstrip('/')}/{device_id}"
+    return {
+        "MQTT_STATE_TOPIC": f"{base}/state",
+        "MQTT_COMMAND_TOPIC": f"{base}/command",
+        "MQTT_AVAILABILITY_TOPIC": f"{base}/availability",
+    }
+
+
+def legacy_single_device_topics(topic_prefix: str) -> dict[str, str]:
+    """Return the old one-device MQTT topic layout for a prefix."""
+    base = topic_prefix.rstrip("/")
     return {
         "MQTT_STATE_TOPIC": f"{base}/state",
         "MQTT_COMMAND_TOPIC": f"{base}/command",
@@ -393,6 +443,19 @@ def merge_bridge_defaults(
     if not merged.get("DEVICE") and merged.get("RFCOMM_DEVICE"):
         merged["DEVICE"] = merged["RFCOMM_DEVICE"]
     return merged
+
+
+def scrub_legacy_single_device_topics(
+    values: dict[str, str],
+    *,
+    topic_prefix: str,
+) -> dict[str, str]:
+    """Remove old one-device MQTT topics so per-device defaults can take over."""
+    cleaned = dict(values)
+    for key, legacy_value in legacy_single_device_topics(topic_prefix).items():
+        if cleaned.get(key) == legacy_value:
+            cleaned.pop(key, None)
+    return cleaned
 
 
 def register_serial_device(
@@ -433,8 +496,24 @@ def register_bluetooth_device(
     normalized_mac = normalize_mac(mac)
     resolved_id = device_id or device_id_from_mac(normalized_mac)
     existing = parse_env_file(device_config_path(install_dir, resolved_id))
+    bridge_defaults = parse_env_file(install_paths(install_dir)["bridge_config"])
+    topic_prefix = existing.get(
+        "MQTT_TOPIC_PREFIX",
+        bridge_defaults.get("MQTT_TOPIC_PREFIX", DEFAULT_TOPIC_PREFIX),
+    )
+    rfcomm_device = choose_rfcomm_device(
+        install_dir,
+        preferred_device=rfcomm_device,
+        device_id=resolved_id,
+    )
+    preserved = {
+        key: value
+        for key, value in existing.items()
+        if key not in BLUETOOTH_DEVICE_DYNAMIC_KEYS
+    }
+    preserved = scrub_legacy_single_device_topics(preserved, topic_prefix=topic_prefix)
     values = {
-        **existing,
+        **preserved,
         "DEVICE_ID": resolved_id,
         "DEVICE_NAME": resolved_id,
         "DEVICE_TRANSPORT": "bluetooth",
@@ -613,14 +692,6 @@ def migrate_legacy_config(install_dir: Path) -> list[str]:
             pair_name=rfcomm_values.get("ET312_BLUETOOTH_PAIR_NAME"),
             device_id=None,
         )
-        device_values = parse_env_file(device_config_path(install_dir, device_id))
-        if bridge_values.get("STATE_TOPIC"):
-            device_values["MQTT_STATE_TOPIC"] = bridge_values["STATE_TOPIC"]
-        if bridge_values.get("COMMAND_TOPIC"):
-            device_values["MQTT_COMMAND_TOPIC"] = bridge_values["COMMAND_TOPIC"]
-        if bridge_values.get("AVAILABILITY_TOPIC"):
-            device_values["MQTT_AVAILABILITY_TOPIC"] = bridge_values["AVAILABILITY_TOPIC"]
-        write_env_file(device_config_path(install_dir, device_id), device_values)
         created.append(device_id)
         return created
 
@@ -630,14 +701,6 @@ def migrate_legacy_config(install_dir: Path) -> list[str]:
             device=bridge_values["DEVICE"],
             device_id=None,
         )
-        device_values = parse_env_file(device_config_path(install_dir, device_id))
-        if bridge_values.get("STATE_TOPIC"):
-            device_values["MQTT_STATE_TOPIC"] = bridge_values["STATE_TOPIC"]
-        if bridge_values.get("COMMAND_TOPIC"):
-            device_values["MQTT_COMMAND_TOPIC"] = bridge_values["COMMAND_TOPIC"]
-        if bridge_values.get("AVAILABILITY_TOPIC"):
-            device_values["MQTT_AVAILABILITY_TOPIC"] = bridge_values["AVAILABILITY_TOPIC"]
-        write_env_file(device_config_path(install_dir, device_id), device_values)
         created.append(device_id)
 
     return created
@@ -702,6 +765,12 @@ def update_devices_from_scan_line(devices: dict[str, str], raw_line: str) -> Non
     devices[mac] = detail
 
 
+def update_devices_from_snapshot(devices: dict[str, str], snapshot: str) -> None:
+    """Merge a bluetoothctl devices snapshot into the discovered device map."""
+    for line in snapshot.splitlines():
+        update_devices_from_scan_line(devices, line)
+
+
 def scan_bluetooth_devices(scan_seconds: int) -> list[tuple[str, str]]:
     """Scan and return candidate Bluetooth devices from the live scan stream."""
     process = subprocess.Popen(
@@ -726,7 +795,11 @@ def scan_bluetooth_devices(scan_seconds: int) -> list[tuple[str, str]]:
             send(command)
 
         deadline = time.monotonic() + scan_seconds
+        next_snapshot = time.monotonic()
         while time.monotonic() < deadline:
+            if time.monotonic() >= next_snapshot:
+                update_devices_from_snapshot(devices, bluetoothctl("devices", check=False).stdout)
+                next_snapshot = time.monotonic() + 1.0
             ready, _, _ = select.select([process.stdout], [], [], 0.5)
             if process.stdout not in ready:
                 continue
@@ -735,6 +808,7 @@ def scan_bluetooth_devices(scan_seconds: int) -> list[tuple[str, str]]:
                 break
             update_devices_from_scan_line(devices, line)
 
+        update_devices_from_snapshot(devices, bluetoothctl("devices", check=False).stdout)
         for command in ("scan off", "quit"):
             send(command)
 

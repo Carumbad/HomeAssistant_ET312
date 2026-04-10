@@ -11,6 +11,7 @@ from scripts.et312_rpi_manager import (
     DEFAULT_ET312_RFCOMM_CHANNEL,
     bluetooth_alias_role,
     bridge_topic_defaults,
+    choose_rfcomm_device,
     detect_rfcomm_channel,
     device_config_path,
     device_id_from_mac,
@@ -58,6 +59,26 @@ class RpiManagerTests(unittest.TestCase):
 
             self.assertEqual(next_rfcomm_device(install_dir), "/dev/rfcomm1")
 
+    def test_choose_rfcomm_device_avoids_duplicate_slots(self) -> None:
+        """Re-registering a second ET312 should not reuse another device's RFCOMM slot."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_dir = Path(tmpdir)
+            devices_dir = install_dir / "config" / "devices"
+            devices_dir.mkdir(parents=True)
+            (devices_dir / "ET312_AAAAAA.env").write_text(
+                'DEVICE_ID="ET312_AAAAAA"\nRFCOMM_DEVICE="/dev/rfcomm0"\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                choose_rfcomm_device(
+                    install_dir,
+                    preferred_device="/dev/rfcomm0",
+                    device_id="ET312_BBBBBB",
+                ),
+                "/dev/rfcomm1",
+            )
+
     def test_register_bluetooth_device_preserves_custom_topics(self) -> None:
         """Re-registering a device should not clobber custom MQTT topics."""
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -99,6 +120,46 @@ class RpiManagerTests(unittest.TestCase):
             )
 
             self.assertEqual(parse_env_file(config_path)["MQTT_STATE_TOPIC"], "custom/one/state")
+
+    def test_register_bluetooth_device_resets_legacy_single_device_topics(self) -> None:
+        """Legacy one-device MQTT topics should be replaced with per-device defaults."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_dir = Path(tmpdir)
+            bridge_config = install_dir / "config" / "et312-bridge.env"
+            bridge_config.parent.mkdir(parents=True)
+            bridge_config.write_text(
+                'MQTT_HOST="127.0.0.1"\nMQTT_PORT="1883"\nMQTT_TOPIC_PREFIX="et312"\n',
+                encoding="utf-8",
+            )
+            config_path = device_config_path(install_dir, "ET312_FE12DE")
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                'DEVICE_ID="ET312_FE12DE"\n'
+                'RFCOMM_DEVICE="/dev/rfcomm0"\n'
+                'MQTT_STATE_TOPIC="et312/state"\n'
+                'MQTT_COMMAND_TOPIC="et312/command"\n'
+                'MQTT_AVAILABILITY_TOPIC="et312/availability"\n',
+                encoding="utf-8",
+            )
+
+            register_bluetooth_device(
+                install_dir,
+                mac="A9:92:75:FE:12:DE",
+                rfcomm_device="/dev/rfcomm0",
+                rfcomm_channel="2",
+                bluetooth_name="Micro312 - Audio",
+                pair_mac="AA:92:75:FE:12:DE",
+                pair_name="Micro312 - SPP",
+                device_id="ET312_FE12DE",
+            )
+
+            rewritten = parse_env_file(config_path)
+            self.assertEqual(rewritten["MQTT_STATE_TOPIC"], "et312/ET312_FE12DE/state")
+            self.assertEqual(rewritten["MQTT_COMMAND_TOPIC"], "et312/ET312_FE12DE/command")
+            self.assertEqual(
+                rewritten["MQTT_AVAILABILITY_TOPIC"],
+                "et312/ET312_FE12DE/availability",
+            )
 
     def test_parse_patterns_drops_empty_entries(self) -> None:
         """Discovery name patterns should tolerate commas and spacing."""
