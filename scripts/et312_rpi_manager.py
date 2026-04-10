@@ -169,6 +169,7 @@ def ensure_layout(install_dir: Path) -> None:
     paths = install_paths(install_dir)
     paths["config_dir"].mkdir(parents=True, exist_ok=True)
     paths["devices_dir"].mkdir(parents=True, exist_ok=True)
+    normalize_bluetooth_device_ids(install_dir)
 
     bridge_defaults = {
         "MQTT_HOST": "127.0.0.1",
@@ -380,6 +381,23 @@ def load_enabled_devices(install_dir: Path) -> list[dict[str, str]]:
         for device in load_device_configs(install_dir)
         if device.get("DEVICE_ENABLED", "1") != "0"
     ]
+
+
+def normalize_bluetooth_device_ids(install_dir: Path) -> None:
+    """Rename Bluetooth device configs to the current canonical MAC-based id."""
+    for path in list_device_config_paths(install_dir):
+        data = parse_env_file(path)
+        mac = data.get("ET312_BLUETOOTH_MAC")
+        if not mac:
+            continue
+        canonical_id = device_id_from_mac(mac)
+        if data.get("DEVICE_ID") == canonical_id and path.name == f"{canonical_id}.env":
+            continue
+        target_path = device_config_path(install_dir, canonical_id)
+        data["DEVICE_ID"] = canonical_id
+        write_env_file(target_path, data)
+        if target_path != path:
+            path.unlink(missing_ok=True)
 
 
 def rfcomm_unit_name(device_id: str) -> str:
@@ -714,29 +732,61 @@ def discover_bluetooth_devices(
     ensure_layout(install_dir)
     registered_ids: list[str] = []
     patterns = tuple(pattern.lower() for pattern in name_patterns if pattern)
+    candidates_by_id: dict[str, list[tuple[str, str]]] = {}
     for mac, name in scan_bluetooth_devices(scan_seconds):
         lower_name = name.lower()
         if patterns and not all(pattern in lower_name for pattern in patterns):
             continue
-        pair_and_trust_device(mac)
-        rfcomm_channel = detect_rfcomm_channel(mac)
-        resolved_id = device_id_from_mac(mac)
+        candidates_by_id.setdefault(device_id_from_mac(mac), []).append((mac, name))
+
+    for resolved_id, candidates in sorted(candidates_by_id.items()):
         existing = parse_env_file(device_config_path(install_dir, resolved_id))
-        rfcomm_device = existing.get("RFCOMM_DEVICE") or next_rfcomm_device(install_dir)
-        interrogate_bluetooth_candidate(
-            mac=mac,
-            rfcomm_device=rfcomm_device,
-            rfcomm_channel=rfcomm_channel,
-        )
-        register_bluetooth_device(
-            install_dir,
-            mac=mac,
-            rfcomm_device=rfcomm_device,
-            rfcomm_channel=rfcomm_channel,
-            bluetooth_name=name,
-            device_id=resolved_id,
-        )
-        registered_ids.append(resolved_id)
+        preferred_mac = existing.get("ET312_BLUETOOTH_MAC")
+        if preferred_mac:
+            candidates.sort(key=lambda candidate: candidate[0] != preferred_mac)
+
+        if existing:
+            known_mac = existing.get("ET312_BLUETOOTH_MAC") or candidates[0][0]
+            known_name = existing.get("ET312_BLUETOOTH_NAME") or candidates[0][1]
+            register_bluetooth_device(
+                install_dir,
+                mac=known_mac,
+                rfcomm_device=existing.get("RFCOMM_DEVICE", next_rfcomm_device(install_dir)),
+                rfcomm_channel=existing.get("RFCOMM_CHANNEL", detect_rfcomm_channel(known_mac)),
+                bluetooth_name=known_name,
+                device_id=resolved_id,
+            )
+            registered_ids.append(resolved_id)
+            continue
+
+        rfcomm_device = next_rfcomm_device(install_dir)
+        last_error: Exception | None = None
+        for mac, name in candidates:
+            pair_and_trust_device(mac)
+            rfcomm_channel = detect_rfcomm_channel(mac)
+            try:
+                interrogate_bluetooth_candidate(
+                    mac=mac,
+                    rfcomm_device=rfcomm_device,
+                    rfcomm_channel=rfcomm_channel,
+                )
+            except Exception as err:
+                last_error = err
+                continue
+
+            register_bluetooth_device(
+                install_dir,
+                mac=mac,
+                rfcomm_device=rfcomm_device,
+                rfcomm_channel=rfcomm_channel,
+                bluetooth_name=name,
+                device_id=resolved_id,
+            )
+            registered_ids.append(resolved_id)
+            break
+        else:
+            if last_error is not None:
+                raise last_error
     return registered_ids
 
 

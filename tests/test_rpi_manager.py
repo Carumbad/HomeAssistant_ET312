@@ -93,4 +93,3 @@ class RpiManagerTests(unittest.TestCase):
     def test_parse_patterns_drops_empty_entries(self) -> None:
         """Discovery name patterns should tolerate commas and spacing."""
         self.assertEqual(parse_patterns("Micro, 312, ,Audio"), ("Micro", "312", "Audio"))
-
