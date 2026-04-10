@@ -643,7 +643,7 @@ def probe_et312_serial(device: str) -> dict[str, int]:
         try:
             box_key = blocking_setup_key(port, timeout=DEFAULT_KEY_TIMEOUT)
             cipher_mask = build_cipher_mask(0x00, box_key)
-        except RuntimeError:
+        except ET312ConnectionError:
             blocking_sync(
                 port,
                 None,
