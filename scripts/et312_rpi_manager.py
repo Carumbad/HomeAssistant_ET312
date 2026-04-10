@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -48,6 +49,28 @@ DEFAULT_POST_SYNC_DELAY = 0.2
 DEFAULT_KEY_TIMEOUT = 1.5
 DEFAULT_CONNECT_RETRIES = 4
 DEFAULT_RECONNECT_DELAY = 3.0
+BLUETOOTHCTL_ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+BLUETOOTHCTL_NAME_FIELDS = (
+    "alias:",
+    "name:",
+)
+BLUETOOTHCTL_STATUS_FIELDS = (
+    "advertisingflags:",
+    "blocked:",
+    "bonded:",
+    "class:",
+    "connected:",
+    "icon:",
+    "legacypairing:",
+    "manufacturerdata.",
+    "manufacturerdata:",
+    "modalias:",
+    "paired:",
+    "rssi:",
+    "servicesresolved:",
+    "trusted:",
+    "uuid:",
+)
 
 
 def blocking_sync(
@@ -244,6 +267,51 @@ def parse_patterns(raw_value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in raw_value.split(",") if part.strip())
 
 
+def bluetooth_alias_role(name: str, info_text: str = "") -> str:
+    """Classify a Bluetooth alias as the bonded or RFCOMM-facing side."""
+    lower_info = info_text.lower()
+    if "0000fff0" in lower_info or "public key open credent" in lower_info:
+        return "pair"
+    if "serial port" in lower_info or "class:" in lower_info:
+        return "rfcomm"
+    lower_name = name.lower()
+    if "spp" in lower_name:
+        return "pair"
+    if "audio" in lower_name:
+        return "rfcomm"
+    return "unknown"
+
+
+def split_bluetooth_aliases(
+    candidates: list[tuple[str, str]],
+    info_by_mac: dict[str, str] | None = None,
+) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """Split grouped aliases into pair/trust and RFCOMM probe candidates."""
+    info_by_mac = info_by_mac or {}
+    pair_candidates = [
+        candidate
+        for candidate in candidates
+        if bluetooth_alias_role(candidate[1], info_by_mac.get(candidate[0], "")) == "pair"
+    ]
+    rfcomm_candidates = [
+        candidate
+        for candidate in candidates
+        if bluetooth_alias_role(candidate[1], info_by_mac.get(candidate[0], "")) == "rfcomm"
+    ]
+    unknown_candidates = [
+        candidate
+        for candidate in candidates
+        if bluetooth_alias_role(candidate[1], info_by_mac.get(candidate[0], "")) == "unknown"
+    ]
+
+    if not rfcomm_candidates:
+        rfcomm_candidates = [*unknown_candidates, *pair_candidates]
+    if not pair_candidates:
+        pair_candidates = [candidate for candidate in unknown_candidates if candidate not in rfcomm_candidates]
+
+    return pair_candidates, rfcomm_candidates
+
+
 def device_config_path(install_dir: Path, device_id: str) -> Path:
     """Return the env-file path for one configured device."""
     return install_paths(install_dir)["devices_dir"] / f"{device_id}.env"
@@ -355,6 +423,8 @@ def register_bluetooth_device(
     rfcomm_device: str,
     rfcomm_channel: str,
     bluetooth_name: str | None,
+    pair_mac: str | None,
+    pair_name: str | None,
     device_id: str | None,
 ) -> str:
     """Register one Bluetooth ET312."""
@@ -374,6 +444,10 @@ def register_bluetooth_device(
     }
     if bluetooth_name:
         values["ET312_BLUETOOTH_NAME"] = bluetooth_name
+    if pair_mac:
+        values["ET312_BLUETOOTH_PAIR_MAC"] = normalize_mac(pair_mac)
+    if pair_name:
+        values["ET312_BLUETOOTH_PAIR_NAME"] = pair_name
     merged = merge_bridge_defaults(install_dir, values)
     write_env_file(device_config_path(install_dir, resolved_id), merged)
     return resolved_id
@@ -534,6 +608,8 @@ def migrate_legacy_config(install_dir: Path) -> list[str]:
             rfcomm_device=rfcomm_values.get("RFCOMM_DEVICE", "/dev/rfcomm0"),
             rfcomm_channel=rfcomm_values.get("RFCOMM_CHANNEL", "2"),
             bluetooth_name=rfcomm_values.get("ET312_BLUETOOTH_NAME"),
+            pair_mac=rfcomm_values.get("ET312_BLUETOOTH_PAIR_MAC"),
+            pair_name=rfcomm_values.get("ET312_BLUETOOTH_PAIR_NAME"),
             device_id=None,
         )
         device_values = parse_env_file(device_config_path(install_dir, device_id))
@@ -581,27 +657,119 @@ def bluetoothctl(*args: str, check: bool = True) -> subprocess.CompletedProcess[
     return run_command(["bluetoothctl", *args], check=check)
 
 
+def bluetooth_device_info(mac: str) -> str:
+    """Fetch the current bluetoothctl info blob for one MAC."""
+    return bluetoothctl("info", mac, check=False).stdout
+
+
+def clean_bluetoothctl_line(raw_line: str) -> str:
+    """Remove control sequences and prompts from bluetoothctl output."""
+    line = BLUETOOTHCTL_ANSI_RE.sub("", raw_line)
+    line = line.replace("\r", "").replace("\x08", "")
+    line = "".join(ch for ch in line if ch.isprintable() or ch in "\n\t")
+    return line.strip()
+
+
+def update_devices_from_scan_line(devices: dict[str, str], raw_line: str) -> None:
+    """Extract device names from live bluetoothctl scan output."""
+    line = clean_bluetoothctl_line(raw_line)
+    if not line or "Device " not in line:
+        return
+
+    match = re.search(r"Device\s+([0-9A-F:]{17})\s+(.+)$", line, re.IGNORECASE)
+    if not match:
+        return
+
+    mac = normalize_mac(match.group(1))
+    detail = match.group(2).strip()
+    lower_detail = detail.lower()
+
+    if lower_detail == "not available":
+        return
+
+    for prefix in BLUETOOTHCTL_NAME_FIELDS:
+        if lower_detail.startswith(prefix):
+            detail = detail.split(":", 1)[1].strip()
+            lower_detail = detail.lower()
+            break
+
+    if not detail:
+        return
+    if any(lower_detail.startswith(prefix) for prefix in BLUETOOTHCTL_STATUS_FIELDS):
+        return
+
+    devices[mac] = detail
+
+
 def scan_bluetooth_devices(scan_seconds: int) -> list[tuple[str, str]]:
-    """Scan and return candidate Bluetooth devices."""
-    bluetoothctl("power", "on", check=False)
-    bluetoothctl("agent", "on", check=False)
-    bluetoothctl("default-agent", check=False)
-    bluetoothctl("scan", "on", check=False)
-    time.sleep(scan_seconds)
-    bluetoothctl("scan", "off", check=False)
-    output = bluetoothctl("devices").stdout
-    devices: list[tuple[str, str]] = []
-    for line in output.splitlines():
-        match = re.match(r"Device\s+([0-9A-F:]{17})\s+(.+)$", line.strip(), re.IGNORECASE)
-        if match:
-            devices.append((normalize_mac(match.group(1)), match.group(2).strip()))
-    return devices
+    """Scan and return candidate Bluetooth devices from the live scan stream."""
+    process = subprocess.Popen(
+        ["bluetoothctl"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    if process.stdin is None or process.stdout is None:
+        raise RuntimeError("Failed to start bluetoothctl scan process")
+
+    devices: dict[str, str] = {}
+
+    def send(command: str) -> None:
+        process.stdin.write(f"{command}\n")
+        process.stdin.flush()
+
+    try:
+        for command in ("power on", "agent on", "default-agent", "scan on"):
+            send(command)
+
+        deadline = time.monotonic() + scan_seconds
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([process.stdout], [], [], 0.5)
+            if process.stdout not in ready:
+                continue
+            line = process.stdout.readline()
+            if not line:
+                break
+            update_devices_from_scan_line(devices, line)
+
+        for command in ("scan off", "quit"):
+            send(command)
+
+        shutdown_deadline = time.monotonic() + 2.0
+        while time.monotonic() < shutdown_deadline:
+            ready, _, _ = select.select([process.stdout], [], [], 0.2)
+            if process.stdout not in ready:
+                if process.poll() is not None:
+                    break
+                continue
+            line = process.stdout.readline()
+            if not line:
+                break
+            update_devices_from_scan_line(devices, line)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=2.0)
+
+    return sorted(devices.items())
 
 
 def pair_and_trust_device(mac: str) -> None:
     """Pair and trust a Bluetooth device."""
     bluetoothctl("pair", mac, check=False)
     bluetoothctl("trust", mac, check=False)
+
+
+def trust_and_disconnect_device(mac: str) -> None:
+    """Trust a Bluetooth device and disconnect any lingering GATT session."""
+    bluetoothctl("trust", mac, check=False)
+    bluetoothctl("disconnect", mac, check=False)
 
 
 def detect_rfcomm_channel(mac: str) -> str:
@@ -746,19 +914,47 @@ def discover_bluetooth_devices(
 
     for resolved_id, candidates in sorted(candidates_by_id.items()):
         existing = parse_env_file(device_config_path(install_dir, resolved_id))
-        preferred_mac = existing.get("ET312_BLUETOOTH_MAC")
-        if preferred_mac:
-            candidates.sort(key=lambda candidate: candidate[0] != preferred_mac)
+        info_by_mac = {mac: bluetooth_device_info(mac) for mac, _ in candidates}
+        pair_candidates, rfcomm_candidates = split_bluetooth_aliases(candidates, info_by_mac)
+
+        preferred_rfcomm_mac = existing.get("ET312_BLUETOOTH_MAC")
+        if preferred_rfcomm_mac:
+            rfcomm_candidates.sort(key=lambda candidate: candidate[0] != preferred_rfcomm_mac)
+        preferred_pair_mac = existing.get("ET312_BLUETOOTH_PAIR_MAC")
+        if preferred_pair_mac:
+            pair_candidates.sort(key=lambda candidate: candidate[0] != preferred_pair_mac)
 
         if existing:
-            known_mac = existing.get("ET312_BLUETOOTH_MAC") or candidates[0][0]
-            known_name = existing.get("ET312_BLUETOOTH_NAME") or candidates[0][1]
+            known_rfcomm = (
+                next(
+                    (
+                        candidate
+                        for candidate in rfcomm_candidates
+                        if candidate[0] == existing.get("ET312_BLUETOOTH_MAC")
+                    ),
+                    None,
+                )
+                or (rfcomm_candidates[0] if rfcomm_candidates else candidates[0])
+            )
+            known_pair = (
+                next(
+                    (
+                        candidate
+                        for candidate in pair_candidates
+                        if candidate[0] == existing.get("ET312_BLUETOOTH_PAIR_MAC")
+                    ),
+                    None,
+                )
+                or (pair_candidates[0] if pair_candidates else None)
+            )
             register_bluetooth_device(
                 install_dir,
-                mac=known_mac,
+                mac=known_rfcomm[0],
                 rfcomm_device=existing.get("RFCOMM_DEVICE", next_rfcomm_device(install_dir)),
-                rfcomm_channel=existing.get("RFCOMM_CHANNEL", detect_rfcomm_channel(known_mac)),
-                bluetooth_name=known_name,
+                rfcomm_channel=existing.get("RFCOMM_CHANNEL", detect_rfcomm_channel(known_rfcomm[0])),
+                bluetooth_name=known_rfcomm[1],
+                pair_mac=(known_pair[0] if known_pair else existing.get("ET312_BLUETOOTH_PAIR_MAC")),
+                pair_name=(known_pair[1] if known_pair else existing.get("ET312_BLUETOOTH_PAIR_NAME")),
                 device_id=resolved_id,
             )
             registered_ids.append(resolved_id)
@@ -766,8 +962,15 @@ def discover_bluetooth_devices(
 
         rfcomm_device = next_rfcomm_device(install_dir)
         candidate_succeeded = False
-        for mac, name in candidates:
-            pair_and_trust_device(mac)
+        chosen_pair: tuple[str, str] | None = pair_candidates[0] if pair_candidates else None
+        if chosen_pair:
+            log(f"Pairing and trusting alias {chosen_pair[0]} ({chosen_pair[1]}) for {resolved_id}")
+            pair_and_trust_device(chosen_pair[0])
+            trust_and_disconnect_device(chosen_pair[0])
+
+        for mac, name in rfcomm_candidates or candidates:
+            if mac != (chosen_pair[0] if chosen_pair else None):
+                trust_and_disconnect_device(mac)
             rfcomm_channel = detect_rfcomm_channel(mac)
             try:
                 interrogate_bluetooth_candidate(
@@ -787,6 +990,8 @@ def discover_bluetooth_devices(
                 rfcomm_device=rfcomm_device,
                 rfcomm_channel=rfcomm_channel,
                 bluetooth_name=name,
+                pair_mac=(chosen_pair[0] if chosen_pair else None),
+                pair_name=(chosen_pair[1] if chosen_pair else None),
                 device_id=resolved_id,
             )
             registered_ids.append(resolved_id)
@@ -828,6 +1033,8 @@ def parse_args() -> argparse.Namespace:
     register_bt.add_argument("--rfcomm-device", required=True)
     register_bt.add_argument("--rfcomm-channel", required=True)
     register_bt.add_argument("--bluetooth-name")
+    register_bt.add_argument("--pair-mac")
+    register_bt.add_argument("--pair-name")
     register_bt.add_argument("--device-id")
 
     discover_bt = subparsers.add_parser(
@@ -872,6 +1079,8 @@ def main() -> None:
             rfcomm_device=args.rfcomm_device,
             rfcomm_channel=args.rfcomm_channel,
             bluetooth_name=args.bluetooth_name,
+            pair_mac=args.pair_mac,
+            pair_name=args.pair_name,
             device_id=args.device_id,
         )
         print(device_id)

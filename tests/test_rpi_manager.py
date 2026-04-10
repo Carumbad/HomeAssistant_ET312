@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from scripts.et312_rpi_manager import (
+    bluetooth_alias_role,
     bridge_topic_defaults,
     device_config_path,
     device_id_from_mac,
@@ -14,6 +15,8 @@ from scripts.et312_rpi_manager import (
     parse_env_file,
     parse_patterns,
     register_bluetooth_device,
+    split_bluetooth_aliases,
+    update_devices_from_scan_line,
 )
 
 
@@ -69,6 +72,8 @@ class RpiManagerTests(unittest.TestCase):
                 rfcomm_device="/dev/rfcomm0",
                 rfcomm_channel="2",
                 bluetooth_name="Micro312 - Audio",
+                pair_mac="AA:92:75:FE:12:DE",
+                pair_name="Micro312 - SPP",
                 device_id=None,
             )
             config_path = device_config_path(install_dir, device_id)
@@ -85,6 +90,8 @@ class RpiManagerTests(unittest.TestCase):
                 rfcomm_device="/dev/rfcomm0",
                 rfcomm_channel="2",
                 bluetooth_name="Micro312 - Audio",
+                pair_mac="AA:92:75:FE:12:DE",
+                pair_name="Micro312 - SPP",
                 device_id=None,
             )
 
@@ -93,3 +100,62 @@ class RpiManagerTests(unittest.TestCase):
     def test_parse_patterns_drops_empty_entries(self) -> None:
         """Discovery name patterns should tolerate commas and spacing."""
         self.assertEqual(parse_patterns("Micro, 312, ,Audio"), ("Micro", "312", "Audio"))
+
+    def test_bluetooth_alias_role_prefers_spp_and_audio(self) -> None:
+        """Known ET312 alias names should be classified predictably."""
+        self.assertEqual(bluetooth_alias_role("Micro312 - SPP"), "pair")
+        self.assertEqual(bluetooth_alias_role("Micro312 - Audio"), "rfcomm")
+        self.assertEqual(bluetooth_alias_role("Micro312"), "unknown")
+        self.assertEqual(
+            bluetooth_alias_role("Micro312 - Audio", "UUID: Public Key Open Credent.."),
+            "pair",
+        )
+
+    def test_split_bluetooth_aliases_groups_pair_and_rfcomm_roles(self) -> None:
+        """Discovery should pair the SPP alias and interrogate the Audio alias."""
+        pair_candidates, rfcomm_candidates = split_bluetooth_aliases(
+            [
+                ("BF:B9:A5:7D:4F:FB", "Micro312 - SPP"),
+                ("BE:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+            ]
+        )
+        self.assertEqual(pair_candidates, [("BF:B9:A5:7D:4F:FB", "Micro312 - SPP")])
+        self.assertEqual(rfcomm_candidates, [("BE:B9:A5:7D:4F:FB", "Micro312 - Audio")])
+
+    def test_split_bluetooth_aliases_uses_info_when_alias_name_is_misleading(self) -> None:
+        """BlueZ alias names can drift, so UUID/class info should win."""
+        pair_candidates, rfcomm_candidates = split_bluetooth_aliases(
+            [
+                ("BF:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+                ("BE:B9:A5:7D:4F:FB", "Micro312 - Audio"),
+            ],
+            {
+                "BF:B9:A5:7D:4F:FB": "UUID: Public Key Open Credent.. (0000fff0-0000-1000-8000-00805f9b34fb)",
+                "BE:B9:A5:7D:4F:FB": "UUID: Serial Port               (00001101-0000-1000-8000-00805f9b34fb)\nClass: 0x00340404",
+            },
+        )
+        self.assertEqual(pair_candidates, [("BF:B9:A5:7D:4F:FB", "Micro312 - Audio")])
+        self.assertEqual(rfcomm_candidates, [("BE:B9:A5:7D:4F:FB", "Micro312 - Audio")])
+
+    def test_update_devices_from_scan_line_tracks_new_and_changed_names(self) -> None:
+        """Live bluetoothctl output should surface both ET312 aliases."""
+        devices: dict[str, str] = {}
+        update_devices_from_scan_line(
+            devices,
+            "[NEW] Device BF:B9:A5:7D:4F:FB Micro312 - SPP",
+        )
+        update_devices_from_scan_line(
+            devices,
+            "[CHG] Device BE:B9:A5:7D:4F:FB Name: Micro312 - Audio",
+        )
+        update_devices_from_scan_line(
+            devices,
+            "[CHG] Device BE:B9:A5:7D:4F:FB Connected: yes",
+        )
+        self.assertEqual(
+            devices,
+            {
+                "BF:B9:A5:7D:4F:FB": "Micro312 - SPP",
+                "BE:B9:A5:7D:4F:FB": "Micro312 - Audio",
+            },
+        )

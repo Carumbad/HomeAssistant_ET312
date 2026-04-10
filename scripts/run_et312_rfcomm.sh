@@ -38,5 +38,13 @@ if [[ ! "${RFCOMM_ID}" =~ ^[0-9]+$ ]]; then
   exit 1
 fi
 
+if [[ -n "${ET312_BLUETOOTH_PAIR_MAC:-}" ]]; then
+  bluetoothctl trust "${ET312_BLUETOOTH_PAIR_MAC}" >/dev/null 2>&1 || true
+  bluetoothctl disconnect "${ET312_BLUETOOTH_PAIR_MAC}" >/dev/null 2>&1 || true
+fi
+
+bluetoothctl trust "${ET312_BLUETOOTH_MAC}" >/dev/null 2>&1 || true
+bluetoothctl disconnect "${ET312_BLUETOOTH_MAC}" >/dev/null 2>&1 || true
+
 rfcomm release "${RFCOMM_ID}" >/dev/null 2>&1 || true
 exec rfcomm connect "${RFCOMM_ID}" "${ET312_BLUETOOTH_MAC}" "${RFCOMM_CHANNEL}"
