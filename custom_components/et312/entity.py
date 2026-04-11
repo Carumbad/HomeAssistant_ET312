@@ -79,7 +79,7 @@ class ET312DiscoveredEntity(Entity):
         """Return device-info metadata for this discovered ET312."""
         return DeviceInfo(
             identifiers={(DOMAIN, self.device_id)},
-            manufacturer="ErosTek",
+            manufacturer="Generic",
             model="ET312",
             name=self.device_id,
         )
