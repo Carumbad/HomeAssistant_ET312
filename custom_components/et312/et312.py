@@ -26,6 +26,8 @@ from .const import (
     MODES,
     MULTI_ADJUST_UI_MAX,
     MULTI_ADJUST_UI_MIN,
+    MULTI_ADJUST_RAW_MAX,
+    MULTI_ADJUST_RAW_MIN,
     CONF_BAUDRATE,
     CONF_CONNECTION_TYPE,
     CONF_DEVICE,
@@ -155,13 +157,13 @@ def raw_byte_to_ui_99(raw_value: int) -> int:
     return round((clamped * CHANNEL_POWER_UI_MAX) / 0xFF)
 
 
-def raw_multi_adjust_to_ui_99(raw_value: int) -> int:
-    """Convert the ET312 multi-adjust byte to the front-panel 0-99 scale.
-
-    The ET312 stores MA inverted: a higher front-panel value maps to a lower
-    raw byte value.
-    """
-    return CHANNEL_POWER_UI_MAX - raw_byte_to_ui_99(raw_value)
+def raw_multi_adjust_to_ui_percent(raw_value: int) -> int:
+    """Convert ET312 multi-adjust from its raw 0x0f-0xff range to 0-100%."""
+    clamped = min(max(raw_value, MULTI_ADJUST_RAW_MIN), MULTI_ADJUST_RAW_MAX)
+    return round(
+        ((clamped - MULTI_ADJUST_RAW_MIN) * MULTI_ADJUST_UI_MAX)
+        / (MULTI_ADJUST_RAW_MAX - MULTI_ADJUST_RAW_MIN)
+    )
 
 
 def raw_level_byte_to_ui_99(raw_value: int) -> int:
@@ -172,13 +174,17 @@ def raw_level_byte_to_ui_99(raw_value: int) -> int:
 
 def ui_99_to_raw_byte(ui_value: int) -> int:
     """Convert a 0-99 UI value to the lower bound of its raw byte bucket."""
-    clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
-    return (clamped * 0xFF + MULTI_ADJUST_UI_MAX - 1) // MULTI_ADJUST_UI_MAX
+    clamped = min(max(ui_value, CHANNEL_POWER_UI_MIN), CHANNEL_POWER_UI_MAX)
+    return (clamped * 0xFF + CHANNEL_POWER_UI_MAX - 1) // CHANNEL_POWER_UI_MAX
 
 
 def ui_multi_adjust_to_raw_byte(ui_value: int) -> int:
-    """Convert a front-panel 0-99 MA value to the ET312's inverted raw byte."""
-    return ui_99_to_raw_byte(CHANNEL_POWER_UI_MAX - ui_value)
+    """Convert a 0-100% multi-adjust value to the ET312's raw 0x0f-0xff range."""
+    clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
+    return MULTI_ADJUST_RAW_MIN + round(
+        (clamped * (MULTI_ADJUST_RAW_MAX - MULTI_ADJUST_RAW_MIN))
+        / MULTI_ADJUST_UI_MAX
+    )
 
 
 def calculate_checksum(data: list[int]) -> int:
@@ -620,7 +626,7 @@ class ET312Client:
             power_level_b=raw_level_byte_to_ui_99(registers[REG_CHANNEL_B_LEVEL]),
             mode_options=tuple(ROUTINES[code] for code in sorted(ROUTINES)),
             battery_percent=raw_byte_to_ui_99(registers[REG_BATTERY_PERCENT]),
-            multi_adjust=raw_multi_adjust_to_ui_99(registers[REG_MULTI_ADJUST_VALUE]),
+            multi_adjust=raw_multi_adjust_to_ui_percent(registers[REG_MULTI_ADJUST_VALUE]),
             front_panel_controls_disabled=bool(
                 registers[REG_CONTROL_FLAGS] & CONTROL_FLAG_DISABLE_KNOBS
             ),

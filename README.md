@@ -125,6 +125,10 @@ State payload example:
 }
 ```
 
+`power_level_a` and `power_level_b` are integer ET312 output levels from `0`
+to `99`. `multi_adjust` is mapped from the ET312 raw `0x0f` to `0xff` range
+into a `0` to `100` percentage.
+
 It publishes availability to the matching availability topic using `online` and
 `offline`.
 

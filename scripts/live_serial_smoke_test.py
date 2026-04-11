@@ -23,6 +23,7 @@ from custom_components.et312.et312 import (
     decode_read_response,
     raw_byte_to_ui_99,
     raw_level_byte_to_ui_99,
+    raw_multi_adjust_to_ui_percent,
 )
 
 
@@ -113,7 +114,7 @@ def _run_blocking_read_only(device: str, baudrate: int, timeout: float) -> None:
             f" power_level_a={raw_level_byte_to_ui_99(level_a)},"
             f" power_level_b={raw_level_byte_to_ui_99(level_b)},"
             f" battery_percent={raw_byte_to_ui_99(battery)},"
-            f" multi_adjust={raw_byte_to_ui_99(ma)}"
+            f" multi_adjust={raw_multi_adjust_to_ui_percent(ma)}"
         )
 
         reset_payload = bytes(apply_cipher(build_write_command(0x4213, [0x00]), cipher_key))
@@ -132,7 +133,7 @@ async def main() -> None:
     parser.add_argument("--mode", help="Optional ET312 mode to switch to")
     parser.add_argument("--power-a", type=int, help="Optional channel A power (0-99)")
     parser.add_argument("--power-b", type=int, help="Optional channel B power (0-99)")
-    parser.add_argument("--ma", type=int, help="Optional multi-adjust value (0-99)")
+    parser.add_argument("--ma", type=int, help="Optional multi-adjust value (0-100%)")
     parser.add_argument(
         "--read-only",
         action="store_true",
