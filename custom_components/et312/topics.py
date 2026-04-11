@@ -56,6 +56,13 @@ def extract_prefix_from_state_topic(state_topic: str) -> str | None:
     return match.group("prefix")
 
 
+def resolve_bridge_device_id(device_id: str | None, state_topic: str) -> str:
+    """Resolve a bridge device id from explicit config or the MQTT state topic."""
+    if device_id and device_id.strip():
+        return normalize_device_id(device_id)
+    return extract_device_id_from_state_topic(state_topic) or ""
+
+
 def entry_device_id(data: Mapping[str, object]) -> str:
     """Resolve a stable per-device identifier from config-entry data."""
     explicit_device_id = data.get(CONF_DEVICE_ID)

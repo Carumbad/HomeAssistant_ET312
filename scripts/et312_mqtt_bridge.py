@@ -23,7 +23,6 @@ from custom_components.et312.const import (
     REG_CHANNEL_B_LEVEL,
     REG_CONTROL_FLAGS,
     REG_MULTI_ADJUST_VALUE,
-    ROUTINES,
 )
 from custom_components.et312.et312 import (
     apply_cipher,
@@ -37,6 +36,9 @@ from custom_components.et312.et312 import (
     raw_multi_adjust_to_ui_99,
     ui_99_to_raw_byte,
     ui_multi_adjust_to_raw_byte,
+)
+from custom_components.et312.topics import (
+    resolve_bridge_device_id,
 )
 
 
@@ -411,6 +413,7 @@ class Bridge:
             self.current_control_flags = control_flags
             payload = {
                 "connected": True,
+                "device_id": self.args.device_id,
                 "mode_code": mode_code,
                 "mode": MODES.get(mode_code, f"Unknown (0x{mode_code:02X})"),
                 "power_level_a": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_A_LEVEL)),
@@ -420,7 +423,6 @@ class Bridge:
                     self._read_register(REG_MULTI_ADJUST_VALUE)
                 ),
                 "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
-                "available_modes": [ROUTINES[code] for code in sorted(ROUTINES)],
             }
         publish_info = self.mqtt.publish(
             self.args.state_topic,
@@ -450,6 +452,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--state-topic", default="et312/state")
     parser.add_argument("--command-topic", default="et312/command")
     parser.add_argument("--availability-topic", default="et312/availability")
+    parser.add_argument("--device-id", default="")
     parser.add_argument("--poll-interval", type=float, default=2.0)
     parser.add_argument("--startup-delay", type=float, default=1.5)
     parser.add_argument("--sync-attempts", type=int, default=40)
@@ -459,7 +462,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--key-exchange-timeout", type=float, default=1.5)
     parser.add_argument("--connect-retries", type=int, default=1)
     parser.add_argument("--reconnect-delay", type=float, default=2.0)
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.device_id = resolve_bridge_device_id(args.device_id, args.state_topic)
+    return args
 
 
 def main() -> None:

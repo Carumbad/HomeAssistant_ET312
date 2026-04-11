@@ -114,14 +114,14 @@ State payload example:
 ```json
 {
   "connected": true,
+  "device_id": "ET312_8EE738",
   "mode_code": 118,
   "mode": "Waves",
   "power_level_a": 10,
   "power_level_b": 12,
   "battery_percent": 72,
   "multi_adjust": 50,
-  "front_panel_controls_disabled": true,
-  "available_modes": ["Power On", "Low", "Normal", "High", "Waves"]
+  "front_panel_controls_disabled": true
 }
 ```
 

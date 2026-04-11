@@ -38,6 +38,7 @@ from custom_components.et312.topics import (
     extract_device_id_from_state_topic,
     extract_prefix_from_state_topic,
     is_valid_device_id,
+    resolve_bridge_device_id,
 )
 
 
@@ -251,6 +252,18 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(is_valid_device_id("et312_8ee738"))
         self.assertFalse(is_valid_device_id("ET312_12345"))
         self.assertFalse(is_valid_device_id("ET312_GG1234"))
+
+    def test_bridge_device_id_resolves_from_config_or_topic(self) -> None:
+        """Bridge payload ids should prefer config and otherwise use the topic path."""
+        self.assertEqual(
+            resolve_bridge_device_id("et312_8ee738", "et312/ET312_7D4FFB/state"),
+            "ET312_8EE738",
+        )
+        self.assertEqual(
+            resolve_bridge_device_id("", "et312/ET312_7D4FFB/state"),
+            "ET312_7D4FFB",
+        )
+        self.assertEqual(resolve_bridge_device_id("", "et312/state"), "")
 
     def test_entry_device_id_prefers_explicit_and_falls_back_to_state_topic(self) -> None:
         """Coordinator ids should be stable for MQTT entries."""

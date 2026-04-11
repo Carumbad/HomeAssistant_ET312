@@ -131,6 +131,10 @@ if [[ -n "${MQTT_PASSWORD:-}" ]]; then
   ARGS+=(--password "${MQTT_PASSWORD}")
 fi
 
+if [[ -n "${DEVICE_ID}" ]]; then
+  ARGS+=(--device-id "${DEVICE_ID}")
+fi
+
 "${PYTHON_BIN}" "${ARGS[@]}"
 EXIT_CODE=$?
 
