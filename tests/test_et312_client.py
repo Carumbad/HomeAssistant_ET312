@@ -15,8 +15,11 @@ from custom_components.et312.const import (
     MODES,
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
+    REG_BATTERY_PERCENT,
     REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
+    REG_MULTI_ADJUST_RANGE_MAX,
+    REG_MULTI_ADJUST_RANGE_MIN,
     REG_MULTI_ADJUST_VALUE,
     ROUTINES,
 )
@@ -70,14 +73,20 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raw_level_byte_to_ui_99(ui_99_to_raw_byte(value)), value)
 
     def test_multi_adjust_scale_uses_documented_raw_range(self) -> None:
-        """MA should map 0x0f-0xff to a 0-100 percentage range."""
+        """MA should map the current raw range into a 0-100 percentage."""
         self.assertEqual(raw_multi_adjust_to_ui_percent(0x00), 0)
         self.assertEqual(raw_multi_adjust_to_ui_percent(0x0F), 0)
         self.assertEqual(raw_multi_adjust_to_ui_percent(0x87), 50)
         self.assertEqual(raw_multi_adjust_to_ui_percent(0xFF), 100)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x20, 0x20, 0x60), 0)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x40, 0x20, 0x60), 50)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x60, 0x20, 0x60), 100)
         self.assertEqual(ui_multi_adjust_to_raw_byte(0), 0x0F)
         self.assertEqual(ui_multi_adjust_to_raw_byte(50), 0x87)
         self.assertEqual(ui_multi_adjust_to_raw_byte(100), 0xFF)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(0, 0x20, 0x60), 0x20)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(50, 0x20, 0x60), 0x40)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(100, 0x20, 0x60), 0x60)
 
     def test_flip_nibbles(self) -> None:
         """The ET312 host key uses nibble-flipping before XOR mask derivation."""
@@ -149,6 +158,7 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
                 REG_CONTROL_FLAGS: CONTROL_FLAG_DISABLE_KNOBS,
             }
         )
+        client.async_read_register = AsyncMock(side_effect=[0x0F, 0xFF])
 
         state = await client.async_get_state()
 
@@ -158,24 +168,76 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state.battery_percent, 34)
         self.assertEqual(state.multi_adjust, 50)
         self.assertTrue(state.front_panel_controls_disabled)
+        self.assertEqual(
+            client.async_read_register.await_args_list,
+            [
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MIN),
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MAX),
+            ],
+        )
+
+    async def test_multi_adjust_bounds_refresh_only_when_mode_changes(self) -> None:
+        """MA bounds should be cached until the ET312 reports a different mode."""
+        client = self._make_client()
+        state_payload = {
+            REG_CHANNEL_A_LEVEL: 0x1C,
+            REG_CHANNEL_B_LEVEL: 0xFF,
+            REG_BATTERY_PERCENT: 87,
+            REG_MULTI_ADJUST_VALUE: 0x40,
+            REG_CONTROL_FLAGS: CONTROL_FLAG_DISABLE_KNOBS,
+        }
+        client.async_read_registers = AsyncMock(
+            side_effect=[
+                {REG_CURRENT_MODE: 0x76, **state_payload},
+                {REG_CURRENT_MODE: 0x76, **state_payload},
+                {REG_CURRENT_MODE: 0x77, **state_payload},
+            ]
+        )
+        client.async_read_register = AsyncMock(
+            side_effect=[0x20, 0x60, 0x10, 0x70]
+        )
+
+        first_state = await client.async_get_state()
+        second_state = await client.async_get_state()
+        third_state = await client.async_get_state()
+
+        self.assertEqual(first_state.multi_adjust, 50)
+        self.assertEqual(second_state.multi_adjust, 50)
+        self.assertEqual(third_state.multi_adjust, 50)
+        self.assertEqual(
+            client.async_read_register.await_args_list,
+            [
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MIN),
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MAX),
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MIN),
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MAX),
+            ],
+        )
 
     async def test_set_multi_adjust_writes_expected_register(self) -> None:
         """Multi-adjust writes should enable software control and poke the live MA register."""
         client = self._make_client()
-        client.async_read_register = AsyncMock(return_value=0x00)
+        client.async_read_register = AsyncMock(side_effect=[0x20, 0x60, 0x00])
         client.async_write_register = AsyncMock()
 
         await client.async_set_multi_adjust(50)
 
         self.assertEqual(
             client.async_read_register.await_args_list,
-            [unittest.mock.call(REG_CONTROL_FLAGS)],
+            [
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MIN),
+                unittest.mock.call(REG_MULTI_ADJUST_RANGE_MAX),
+                unittest.mock.call(REG_CONTROL_FLAGS),
+            ],
         )
         self.assertEqual(
             client.async_write_register.await_args_list,
             [
                 unittest.mock.call(REG_CONTROL_FLAGS, [CONTROL_FLAG_DISABLE_KNOBS]),
-                unittest.mock.call(REG_MULTI_ADJUST_VALUE, [ui_multi_adjust_to_raw_byte(50)]),
+                unittest.mock.call(
+                    REG_MULTI_ADJUST_VALUE,
+                    [ui_multi_adjust_to_raw_byte(50, 0x20, 0x60)],
+                ),
             ],
         )
 

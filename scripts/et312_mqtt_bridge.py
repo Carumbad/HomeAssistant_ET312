@@ -24,6 +24,8 @@ from custom_components.et312.const import (
     REG_CHANNEL_A_LEVEL,
     REG_CHANNEL_B_LEVEL,
     REG_CONTROL_FLAGS,
+    REG_MULTI_ADJUST_RANGE_MAX,
+    REG_MULTI_ADJUST_RANGE_MIN,
     REG_MULTI_ADJUST_VALUE,
 )
 from custom_components.et312.et312 import (
@@ -33,6 +35,7 @@ from custom_components.et312.et312 import (
     build_write_command,
     calculate_checksum,
     decode_read_response,
+    multi_adjust_bounds,
     raw_byte_to_ui_99,
     raw_level_byte_to_ui_99,
     raw_multi_adjust_to_ui_percent,
@@ -124,6 +127,8 @@ class Bridge:
         self.cipher_mask: int | None = None
         self.last_cipher_mask: int | None = None
         self.current_control_flags: int | None = None
+        self.multi_adjust_mode_code: int | None = None
+        self.multi_adjust_raw_bounds: tuple[int, int] | None = None
         self.last_published_payload: dict[str, object] | None = None
         self._publish_lock = threading.RLock()
         self._serial_lock = threading.RLock()
@@ -184,6 +189,8 @@ class Bridge:
             self.box_key = None
             self.cipher_mask = None
             self.current_control_flags = None
+            self.multi_adjust_mode_code = None
+            self.multi_adjust_raw_bounds = None
             try:
                 self._log(
                     f"Connect attempt {attempt}/{self.args.connect_retries} "
@@ -379,6 +386,20 @@ class Bridge:
         self.current_control_flags = flags
         return flags
 
+    def _get_multi_adjust_bounds(self, mode_code: int | None = None) -> tuple[int, int]:
+        """Return cached multi-adjust bounds, refreshing them when mode changes."""
+        if (
+            self.multi_adjust_raw_bounds is not None
+            and (mode_code is None or self.multi_adjust_mode_code == mode_code)
+        ):
+            return self.multi_adjust_raw_bounds
+
+        raw_min = self._read_register(REG_MULTI_ADJUST_RANGE_MIN)
+        raw_max = self._read_register(REG_MULTI_ADJUST_RANGE_MAX)
+        self.multi_adjust_mode_code = mode_code
+        self.multi_adjust_raw_bounds = multi_adjust_bounds(raw_min, raw_max)
+        return self.multi_adjust_raw_bounds
+
     def _set_control_flags(self, desired_flags: int) -> None:
         """Write ET312 control flags when the value changes."""
         current_flags = self._get_control_flags()
@@ -402,6 +423,8 @@ class Bridge:
             if name == mode_name:
                 self._write_register(0x407B, [code])
                 self._write_register(0x4070, [0x04, 0x12])
+                self.multi_adjust_mode_code = None
+                self.multi_adjust_raw_bounds = None
                 time.sleep(0.02)
                 return
         raise RuntimeError(f"Unsupported ET312 mode: {mode_name}")
@@ -423,15 +446,22 @@ class Bridge:
     def _set_multi_adjust(self, value: int) -> None:
         if value < MULTI_ADJUST_UI_MIN or value > MULTI_ADJUST_UI_MAX:
             raise RuntimeError(f"Unsupported ET312 multi-adjust value: {value}")
+        raw_min, raw_max = self._get_multi_adjust_bounds()
         current_flags = self._get_control_flags()
         self._set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
-        self._write_register(REG_MULTI_ADJUST_VALUE, [ui_multi_adjust_to_raw_byte(value)])
+        self._write_register(
+            REG_MULTI_ADJUST_VALUE,
+            [ui_multi_adjust_to_raw_byte(value, raw_min, raw_max)],
+        )
 
     def read_state_payload(self) -> dict[str, object]:
         """Read the current ET312 state as a normalized MQTT payload."""
         with self._serial_lock:
             mode_code = self._read_register(0x407B)
             control_flags = self._read_register(REG_CONTROL_FLAGS)
+            multi_adjust_raw_min, multi_adjust_raw_max = self._get_multi_adjust_bounds(
+                mode_code
+            )
             self.current_control_flags = control_flags
             return {
                 "connected": True,
@@ -442,7 +472,9 @@ class Bridge:
                 "power_level_b": raw_level_byte_to_ui_99(self._read_register(REG_CHANNEL_B_LEVEL)),
                 "battery_percent": raw_byte_to_ui_99(self._read_register(0x4203)),
                 "multi_adjust": raw_multi_adjust_to_ui_percent(
-                    self._read_register(REG_MULTI_ADJUST_VALUE)
+                    self._read_register(REG_MULTI_ADJUST_VALUE),
+                    multi_adjust_raw_min,
+                    multi_adjust_raw_max,
                 ),
                 "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
             }

@@ -11,7 +11,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from custom_components.et312.const import CONNECTION_SERIAL
+from custom_components.et312.const import (
+    CONNECTION_SERIAL,
+    REG_MULTI_ADJUST_RANGE_MAX,
+    REG_MULTI_ADJUST_RANGE_MIN,
+    REG_MULTI_ADJUST_VALUE,
+)
 from custom_components.et312.et312 import (
     ET312Client,
     ET312ConnectionConfig,
@@ -105,7 +110,9 @@ def _run_blocking_read_only(device: str, baudrate: int, timeout: float) -> None:
         level_a = _blocking_read_register(port, 0x4064, cipher_key)
         level_b = _blocking_read_register(port, 0x4065, cipher_key)
         battery = _blocking_read_register(port, 0x4203, cipher_key)
-        ma = _blocking_read_register(port, 0x420D, cipher_key)
+        ma_min = _blocking_read_register(port, REG_MULTI_ADJUST_RANGE_MIN, cipher_key)
+        ma_max = _blocking_read_register(port, REG_MULTI_ADJUST_RANGE_MAX, cipher_key)
+        ma = _blocking_read_register(port, REG_MULTI_ADJUST_VALUE, cipher_key)
 
         print("Connected to ET312 via blocking fallback")
         print(
@@ -114,7 +121,7 @@ def _run_blocking_read_only(device: str, baudrate: int, timeout: float) -> None:
             f" power_level_a={raw_level_byte_to_ui_99(level_a)},"
             f" power_level_b={raw_level_byte_to_ui_99(level_b)},"
             f" battery_percent={raw_byte_to_ui_99(battery)},"
-            f" multi_adjust={raw_multi_adjust_to_ui_percent(ma)}"
+            f" multi_adjust={raw_multi_adjust_to_ui_percent(ma, ma_min, ma_max)}"
         )
 
         reset_payload = bytes(apply_cipher(build_write_command(0x4213, [0x00]), cipher_key))

@@ -46,6 +46,8 @@ from .const import (
     REG_CONTROL_FLAGS,
     REG_CURRENT_MODE,
     REG_MULTI_ADJUST_VALUE,
+    REG_MULTI_ADJUST_RANGE_MAX,
+    REG_MULTI_ADJUST_RANGE_MIN,
     ROUTINES,
 )
 
@@ -157,12 +159,29 @@ def raw_byte_to_ui_99(raw_value: int) -> int:
     return round((clamped * CHANNEL_POWER_UI_MAX) / 0xFF)
 
 
-def raw_multi_adjust_to_ui_percent(raw_value: int) -> int:
-    """Convert ET312 multi-adjust from its raw 0x0f-0xff range to 0-100%."""
-    clamped = min(max(raw_value, MULTI_ADJUST_RAW_MIN), MULTI_ADJUST_RAW_MAX)
+def multi_adjust_bounds(raw_min: int, raw_max: int) -> tuple[int, int]:
+    """Return the current ET312 multi-adjust lower and upper raw bounds."""
+    lower = min(max(raw_min, 0), 0xFF)
+    upper = min(max(raw_max, 0), 0xFF)
+    if lower > upper:
+        lower, upper = upper, lower
+    return lower, upper
+
+
+def raw_multi_adjust_to_ui_percent(
+    raw_value: int,
+    raw_min: int = MULTI_ADJUST_RAW_MIN,
+    raw_max: int = MULTI_ADJUST_RAW_MAX,
+) -> int:
+    """Convert ET312 multi-adjust from the current raw range to 0-100%."""
+    lower, upper = multi_adjust_bounds(raw_min, raw_max)
+    if lower == upper:
+        return MULTI_ADJUST_UI_MIN
+
+    clamped = min(max(raw_value, lower), upper)
     return round(
-        ((clamped - MULTI_ADJUST_RAW_MIN) * MULTI_ADJUST_UI_MAX)
-        / (MULTI_ADJUST_RAW_MAX - MULTI_ADJUST_RAW_MIN)
+        ((clamped - lower) * MULTI_ADJUST_UI_MAX)
+        / (upper - lower)
     )
 
 
@@ -178,11 +197,19 @@ def ui_99_to_raw_byte(ui_value: int) -> int:
     return (clamped * 0xFF + CHANNEL_POWER_UI_MAX - 1) // CHANNEL_POWER_UI_MAX
 
 
-def ui_multi_adjust_to_raw_byte(ui_value: int) -> int:
-    """Convert a 0-100% multi-adjust value to the ET312's raw 0x0f-0xff range."""
+def ui_multi_adjust_to_raw_byte(
+    ui_value: int,
+    raw_min: int = MULTI_ADJUST_RAW_MIN,
+    raw_max: int = MULTI_ADJUST_RAW_MAX,
+) -> int:
+    """Convert a 0-100% multi-adjust value to the current ET312 raw range."""
+    lower, upper = multi_adjust_bounds(raw_min, raw_max)
+    if lower == upper:
+        return lower
+
     clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
-    return MULTI_ADJUST_RAW_MIN + round(
-        (clamped * (MULTI_ADJUST_RAW_MAX - MULTI_ADJUST_RAW_MIN))
+    return lower + round(
+        (clamped * (upper - lower))
         / MULTI_ADJUST_UI_MAX
     )
 
@@ -538,6 +565,8 @@ class ET312Client:
         self._cipher_mask: int | None = None
         self._last_cipher_mask: int | None = None
         self._current_control_flags: int | None = None
+        self._multi_adjust_mode_code: int | None = None
+        self._multi_adjust_raw_bounds: tuple[int, int] | None = None
 
     def _build_transport(self, config: ET312ConnectionConfig) -> ET312Transport:
         """Create the selected ET312 transport."""
@@ -593,6 +622,8 @@ class ET312Client:
             self._box_key = None
             self._cipher_mask = None
             self._current_control_flags = None
+            self._multi_adjust_mode_code = None
+            self._multi_adjust_raw_bounds = None
             raise
 
         self._connected = True
@@ -617,6 +648,9 @@ class ET312Client:
         )
 
         mode_code = registers[REG_CURRENT_MODE]
+        multi_adjust_raw_min, multi_adjust_raw_max = await self._async_get_multi_adjust_bounds(
+            mode_code
+        )
         self._current_control_flags = registers[REG_CONTROL_FLAGS]
         return ET312State(
             connected=True,
@@ -626,7 +660,11 @@ class ET312Client:
             power_level_b=raw_level_byte_to_ui_99(registers[REG_CHANNEL_B_LEVEL]),
             mode_options=tuple(ROUTINES[code] for code in sorted(ROUTINES)),
             battery_percent=raw_byte_to_ui_99(registers[REG_BATTERY_PERCENT]),
-            multi_adjust=raw_multi_adjust_to_ui_percent(registers[REG_MULTI_ADJUST_VALUE]),
+            multi_adjust=raw_multi_adjust_to_ui_percent(
+                registers[REG_MULTI_ADJUST_VALUE],
+                multi_adjust_raw_min,
+                multi_adjust_raw_max,
+            ),
             front_panel_controls_disabled=bool(
                 registers[REG_CONTROL_FLAGS] & CONTROL_FLAG_DISABLE_KNOBS
             ),
@@ -644,6 +682,8 @@ class ET312Client:
         self._box_key = None
         self._cipher_mask = None
         self._current_control_flags = None
+        self._multi_adjust_mode_code = None
+        self._multi_adjust_raw_bounds = None
 
     async def async_read_register(self, address: int) -> int:
         """Read a single ET312 register."""
@@ -684,6 +724,23 @@ class ET312Client:
         await self.async_write_register(REG_CONTROL_FLAGS, [desired_flags])
         self._current_control_flags = desired_flags
 
+    async def _async_get_multi_adjust_bounds(
+        self,
+        mode_code: int | None = None,
+    ) -> tuple[int, int]:
+        """Return cached multi-adjust bounds, refreshing them when mode changes."""
+        if (
+            self._multi_adjust_raw_bounds is not None
+            and (mode_code is None or self._multi_adjust_mode_code == mode_code)
+        ):
+            return self._multi_adjust_raw_bounds
+
+        raw_min = await self.async_read_register(REG_MULTI_ADJUST_RANGE_MIN)
+        raw_max = await self.async_read_register(REG_MULTI_ADJUST_RANGE_MAX)
+        self._multi_adjust_mode_code = mode_code
+        self._multi_adjust_raw_bounds = multi_adjust_bounds(raw_min, raw_max)
+        return self._multi_adjust_raw_bounds
+
     async def async_set_front_panel_controls_disabled(self, disabled: bool) -> None:
         """Enable or disable the ET312 front-panel knobs."""
         if self.config.connection_type == CONNECTION_MQTT:
@@ -720,6 +777,8 @@ class ET312Client:
         mode_code = self._mode_code_from_name(mode_name)
         await self.async_write_register(REG_CURRENT_MODE, [mode_code])
         await self.async_write_register(REG_EXECUTE_COMMAND, [0x04, 0x12])
+        self._multi_adjust_mode_code = None
+        self._multi_adjust_raw_bounds = None
         await asyncio.sleep(0.02)
 
     async def async_set_channel_power(self, channel: str, level: int) -> None:
@@ -760,11 +819,12 @@ class ET312Client:
             )
             return
 
+        raw_min, raw_max = await self._async_get_multi_adjust_bounds()
         current_flags = await self._async_get_control_flags()
         await self._async_set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         await self.async_write_register(
             REG_MULTI_ADJUST_VALUE,
-            [ui_multi_adjust_to_raw_byte(value)],
+            [ui_multi_adjust_to_raw_byte(value, raw_min, raw_max)],
         )
 
     def _mode_code_from_name(self, mode_name: str) -> int:

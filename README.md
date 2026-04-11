@@ -126,8 +126,10 @@ State payload example:
 ```
 
 `power_level_a` and `power_level_b` are integer ET312 output levels from `0`
-to `99`. `multi_adjust` is mapped from the ET312 raw `0x0f` to `0xff` range
-into a `0` to `100` percentage.
+to `99`. `multi_adjust` is a `0` to `100` percentage mapped from the
+current mode's ET312 multi-adjust range (`$4086` minimum, `$4087` maximum)
+and live value (`$420D`). The bridge caches that range per mode and refreshes
+it when the mode changes.
 
 It publishes availability to the matching availability topic using `online` and
 `offline`.
