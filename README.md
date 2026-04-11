@@ -186,7 +186,8 @@ The bridge:
 
 - opens the ET312 over serial
 - syncs and negotiates the ET312 cipher key
-- publishes retained JSON state to the configured MQTT state topic
+- publishes retained JSON state at startup, on `request_state`, and when values change
+- repeats changed state once per second for three seconds, then stays quiet until another change
 - publishes `online` and `offline` to the availability topic
 - accepts `set_mode`, `set_power`, `set_multi_adjust`, `set_front_panel_controls_disabled`, and `request_state` JSON commands
 - uses slower, retry-heavy sync defaults that are friendlier to Bluetooth RFCOMM links
@@ -308,6 +309,9 @@ For Bluetooth serial, the bridge installer defaults are intentionally more
 patient than the wired case: longer startup delay, more sync attempts, and
 reconnect retries before giving up.
 
-For Home Assistant, add one MQTT ET312 integration entry per saved bridge
-device and point each entry at that device's state, command, and availability
-topics.
+For Home Assistant, install the integration with HACS, restart Home Assistant,
+then add the `ET312` integration from Settings -> Devices & services. Choose
+the MQTT connection type and enter the shared topic prefix, usually `et312`.
+The integration subscribes to `et312/+/state` and `et312/+/availability`, then
+creates one Home Assistant device and entity set for each discovered device id
+such as `ET312_8EE738`.

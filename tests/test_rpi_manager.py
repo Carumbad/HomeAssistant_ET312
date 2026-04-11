@@ -16,6 +16,7 @@ from scripts.et312_rpi_manager import (
     detect_rfcomm_channel,
     device_config_path,
     device_id_from_mac,
+    ensure_layout,
     next_rfcomm_device,
     parse_env_file,
     parse_patterns,
@@ -42,6 +43,17 @@ class RpiManagerTests(unittest.TestCase):
                 "MQTT_AVAILABILITY_TOPIC": "et312/ET312_FE12DE/availability",
             },
         )
+
+    def test_layout_defaults_include_change_publish_burst_settings(self) -> None:
+        """Fresh Pi installs should default to quiet MQTT publishing bursts."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            install_dir = Path(tmpdir)
+
+            ensure_layout(install_dir)
+
+            config = parse_env_file(install_dir / "config" / "et312-bridge.env")
+            self.assertEqual(config["CHANGE_BURST_COUNT"], "3")
+            self.assertEqual(config["CHANGE_BURST_INTERVAL"], "1.0")
 
     def test_next_rfcomm_device_skips_assigned_slots(self) -> None:
         """RFCOMM allocation should avoid clashes with already-known devices."""

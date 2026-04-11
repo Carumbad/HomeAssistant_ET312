@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -29,6 +29,7 @@ async def async_setup_entry(
     manager: ET312MqttDiscoveryManager = runtime
     known: set[str] = set()
 
+    @callback
     def add_for_device(device_id: str) -> None:
         if device_id in known:
             return

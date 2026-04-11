@@ -121,6 +121,8 @@ class Bridge:
         self.cipher_mask: int | None = None
         self.last_cipher_mask: int | None = None
         self.current_control_flags: int | None = None
+        self.last_published_payload: dict[str, object] | None = None
+        self._publish_lock = threading.RLock()
         self._serial_lock = threading.RLock()
         self.mqtt = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
         if args.username:
@@ -284,7 +286,7 @@ class Bridge:
             retain=True,
         )
         self._log(f"Published availability with rc={availability_info.rc}")
-        self.publish_state()
+        self.publish_state(force=True)
 
     def close(self) -> None:
         """Close the bridge cleanly."""
@@ -312,20 +314,29 @@ class Bridge:
             payload = json.loads(msg.payload.decode("utf-8"))
             command = payload["command"]
             self._log(f"Received command on {msg.topic}: {payload}")
+            force_publish = False
+            burst_publish = False
             with self._serial_lock:
                 if command == "set_mode":
                     self._set_mode(str(payload["mode"]))
+                    burst_publish = True
                 elif command == "set_power":
                     self._set_power(str(payload["channel"]), int(payload["value"]))
+                    burst_publish = True
                 elif command == "set_multi_adjust":
                     self._set_multi_adjust(int(payload["value"]))
+                    burst_publish = True
                 elif command == "set_front_panel_controls_disabled":
                     self._set_front_panel_controls_disabled(bool(payload["value"]))
+                    burst_publish = True
                 elif command == "request_state":
-                    pass
+                    force_publish = True
                 else:
                     raise RuntimeError(f"Unsupported ET312 bridge command: {command}")
-                self.publish_state()
+            if force_publish:
+                self.publish_state(force=True)
+            elif burst_publish:
+                self.publish_state_burst()
         except Exception as err:
             self._log(f"Command handling failed: {err}")
 
@@ -405,13 +416,13 @@ class Bridge:
         self._set_control_flags(current_flags | CONTROL_FLAG_DISABLE_KNOBS)
         self._write_register(REG_MULTI_ADJUST_VALUE, [ui_multi_adjust_to_raw_byte(value)])
 
-    def publish_state(self) -> None:
-        """Publish the current ET312 state as retained JSON."""
+    def read_state_payload(self) -> dict[str, object]:
+        """Read the current ET312 state as a normalized MQTT payload."""
         with self._serial_lock:
             mode_code = self._read_register(0x407B)
             control_flags = self._read_register(REG_CONTROL_FLAGS)
             self.current_control_flags = control_flags
-            payload = {
+            return {
                 "connected": True,
                 "device_id": self.args.device_id,
                 "mode_code": mode_code,
@@ -424,11 +435,21 @@ class Bridge:
                 ),
                 "front_panel_controls_disabled": bool(control_flags & CONTROL_FLAG_DISABLE_KNOBS),
             }
-        publish_info = self.mqtt.publish(
-            self.args.state_topic,
-            json.dumps(payload),
-            retain=True,
-        )
+
+    def publish_state(self, *, force: bool = False) -> bool:
+        """Publish current ET312 state when changed or explicitly requested."""
+        with self._publish_lock:
+            payload = self.read_state_payload()
+            if not force and payload == self.last_published_payload:
+                return False
+
+            publish_info = self.mqtt.publish(
+                self.args.state_topic,
+                json.dumps(payload),
+                retain=True,
+            )
+            self.last_published_payload = dict(payload)
+
         self._log(
             "Published state with rc="
             f"{publish_info.rc}: mode={payload['mode']} "
@@ -437,6 +458,32 @@ class Bridge:
             f"MA={payload['multi_adjust']} "
             f"battery={payload['battery_percent']}"
         )
+        return True
+
+    def publish_state_burst(self) -> bool:
+        """Publish a short state burst after a detected payload change."""
+        if not self.publish_state():
+            return False
+        for _ in range(1, self.args.change_burst_count):
+            time.sleep(self.args.change_burst_interval)
+            self.publish_state(force=True)
+        return True
+
+
+def positive_float(value: str) -> float:
+    """Parse a positive floating-point CLI value."""
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("value must be greater than 0")
+    return parsed
+
+
+def positive_int(value: str) -> int:
+    """Parse a positive integer CLI value."""
+    parsed = int(value)
+    if parsed < 1:
+        raise argparse.ArgumentTypeError("value must be at least 1")
+    return parsed
 
 
 def parse_args() -> argparse.Namespace:
@@ -454,6 +501,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--availability-topic", default="et312/availability")
     parser.add_argument("--device-id", default="")
     parser.add_argument("--poll-interval", type=float, default=2.0)
+    parser.add_argument("--change-burst-count", type=positive_int, default=3)
+    parser.add_argument("--change-burst-interval", type=positive_float, default=1.0)
     parser.add_argument("--startup-delay", type=float, default=1.5)
     parser.add_argument("--sync-attempts", type=int, default=40)
     parser.add_argument("--sync-read-timeout", type=float, default=0.35)
@@ -474,7 +523,7 @@ def main() -> None:
     bridge.connect()
     try:
         while True:
-            bridge.publish_state()
+            bridge.publish_state_burst()
             time.sleep(args.poll_interval)
     finally:
         bridge.close()

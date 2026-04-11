@@ -113,6 +113,8 @@ ARGS=(
   --command-topic "${COMMAND_TOPIC}"
   --availability-topic "${AVAILABILITY_TOPIC}"
   --poll-interval "${POLL_INTERVAL}"
+  --change-burst-count "${CHANGE_BURST_COUNT:-3}"
+  --change-burst-interval "${CHANGE_BURST_INTERVAL:-1.0}"
   --startup-delay "${EFFECTIVE_STARTUP_DELAY}"
   --sync-attempts "${SYNC_ATTEMPTS:-40}"
   --sync-read-timeout "${SYNC_READ_TIMEOUT:-0.35}"

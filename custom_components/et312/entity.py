@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from homeassistant.core import callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity
@@ -84,6 +85,7 @@ class ET312DiscoveredEntity(Entity):
             name=self.device_id,
         )
 
+    @callback
     def _handle_manager_update(self, updated_device_id: str) -> None:
         """Write entity state when manager publishes an update."""
         if updated_device_id != self.device_id:
