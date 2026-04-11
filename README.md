@@ -129,7 +129,8 @@ State payload example:
 to `99`. `multi_adjust` is a `0` to `100` percentage mapped from the
 current mode's ET312 multi-adjust range (`$4086` minimum, `$4087` maximum)
 and live value (`$420D`). The bridge caches that range per mode and refreshes
-it when the mode changes.
+it when the mode changes. The raw upper bound maps to the bottom of the
+ET312 front-panel dial.
 
 It publishes availability to the matching availability topic using `online` and
 `offline`.

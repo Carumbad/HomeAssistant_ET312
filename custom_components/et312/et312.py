@@ -180,7 +180,7 @@ def raw_multi_adjust_to_ui_percent(
 
     clamped = min(max(raw_value, lower), upper)
     return round(
-        ((clamped - lower) * MULTI_ADJUST_UI_MAX)
+        ((upper - clamped) * MULTI_ADJUST_UI_MAX)
         / (upper - lower)
     )
 
@@ -209,7 +209,7 @@ def ui_multi_adjust_to_raw_byte(
 
     clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
     return lower + round(
-        (clamped * (upper - lower))
+        ((MULTI_ADJUST_UI_MAX - clamped) * (upper - lower))
         / MULTI_ADJUST_UI_MAX
     )
 

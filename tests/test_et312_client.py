@@ -73,20 +73,20 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(raw_level_byte_to_ui_99(ui_99_to_raw_byte(value)), value)
 
     def test_multi_adjust_scale_uses_documented_raw_range(self) -> None:
-        """MA should map the current raw range into a 0-100 percentage."""
-        self.assertEqual(raw_multi_adjust_to_ui_percent(0x00), 0)
-        self.assertEqual(raw_multi_adjust_to_ui_percent(0x0F), 0)
+        """MA should map the current raw range to the ET312 dial direction."""
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x00), 100)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x0F), 100)
         self.assertEqual(raw_multi_adjust_to_ui_percent(0x87), 50)
-        self.assertEqual(raw_multi_adjust_to_ui_percent(0xFF), 100)
-        self.assertEqual(raw_multi_adjust_to_ui_percent(0x20, 0x20, 0x60), 0)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0xFF), 0)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x20, 0x20, 0x60), 100)
         self.assertEqual(raw_multi_adjust_to_ui_percent(0x40, 0x20, 0x60), 50)
-        self.assertEqual(raw_multi_adjust_to_ui_percent(0x60, 0x20, 0x60), 100)
-        self.assertEqual(ui_multi_adjust_to_raw_byte(0), 0x0F)
+        self.assertEqual(raw_multi_adjust_to_ui_percent(0x60, 0x20, 0x60), 0)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(0), 0xFF)
         self.assertEqual(ui_multi_adjust_to_raw_byte(50), 0x87)
-        self.assertEqual(ui_multi_adjust_to_raw_byte(100), 0xFF)
-        self.assertEqual(ui_multi_adjust_to_raw_byte(0, 0x20, 0x60), 0x20)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(100), 0x0F)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(0, 0x20, 0x60), 0x60)
         self.assertEqual(ui_multi_adjust_to_raw_byte(50, 0x20, 0x60), 0x40)
-        self.assertEqual(ui_multi_adjust_to_raw_byte(100, 0x20, 0x60), 0x60)
+        self.assertEqual(ui_multi_adjust_to_raw_byte(100, 0x20, 0x60), 0x20)
 
     def test_flip_nibbles(self) -> None:
         """The ET312 host key uses nibble-flipping before XOR mask derivation."""
