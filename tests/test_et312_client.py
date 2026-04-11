@@ -64,6 +64,11 @@ class ET312ClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(raw_level_byte_to_ui_99(0x1C), 10)
         self.assertEqual(raw_level_byte_to_ui_99(0xFF), 99)
 
+    def test_channel_power_scale_round_trips_to_display_value(self) -> None:
+        """Channel writes should read back as the requested ET312 UI value."""
+        for value in range(100):
+            self.assertEqual(raw_level_byte_to_ui_99(ui_99_to_raw_byte(value)), value)
+
     def test_multi_adjust_scale_is_inverted(self) -> None:
         """MA should read and write opposite to the raw byte direction."""
         self.assertEqual(raw_multi_adjust_to_ui_99(0xFF), 0)

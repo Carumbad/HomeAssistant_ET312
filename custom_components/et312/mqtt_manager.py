@@ -20,7 +20,7 @@ from .const import (
     SIGNAL_DEVICE_UPDATED,
 )
 from .et312 import ET312State
-from .mqtt_payload import payload_to_text
+from .mqtt_payload import command_payload_for_device, payload_to_text
 from .topics import normalize_device_id
 
 _LOGGER = logging.getLogger(__name__)
@@ -84,10 +84,11 @@ class ET312MqttDiscoveryManager:
 
     async def async_publish_command(self, device_id: str, payload: dict[str, Any]) -> None:
         """Publish a command to a discovered ET312 topic."""
+        command_payload = command_payload_for_device(device_id, payload)
         await mqtt.async_publish(
             self.hass,
             self.command_topic(device_id),
-            json.dumps(payload),
+            json.dumps(command_payload),
             qos=0,
             retain=False,
         )

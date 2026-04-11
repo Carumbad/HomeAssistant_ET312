@@ -171,9 +171,9 @@ def raw_level_byte_to_ui_99(raw_value: int) -> int:
 
 
 def ui_99_to_raw_byte(ui_value: int) -> int:
-    """Convert a 0-99 UI value to a generic ET312 raw byte."""
+    """Convert a 0-99 UI value to the lower bound of its raw byte bucket."""
     clamped = min(max(ui_value, MULTI_ADJUST_UI_MIN), MULTI_ADJUST_UI_MAX)
-    return round((clamped * 0xFF) / MULTI_ADJUST_UI_MAX)
+    return (clamped * 0xFF + MULTI_ADJUST_UI_MAX - 1) // MULTI_ADJUST_UI_MAX
 
 
 def ui_multi_adjust_to_raw_byte(ui_value: int) -> int:

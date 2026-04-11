@@ -38,6 +38,7 @@ from custom_components.et312.et312 import (
     ui_multi_adjust_to_raw_byte,
 )
 from custom_components.et312.topics import (
+    normalize_device_id,
     resolve_bridge_device_id,
 )
 
@@ -313,6 +314,14 @@ class Bridge:
         try:
             payload = json.loads(msg.payload.decode("utf-8"))
             command = payload["command"]
+            payload_device_id = payload.get("device_id")
+            if payload_device_id is not None:
+                normalized_payload_device_id = normalize_device_id(str(payload_device_id))
+                if normalized_payload_device_id != self.args.device_id:
+                    raise RuntimeError(
+                        "Ignoring command for "
+                        f"{normalized_payload_device_id}; this bridge is {self.args.device_id}"
+                    )
             self._log(f"Received command on {msg.topic}: {payload}")
             force_publish = False
             burst_publish = False
@@ -320,7 +329,7 @@ class Bridge:
                 if command == "set_mode":
                     self._set_mode(str(payload["mode"]))
                     burst_publish = True
-                elif command == "set_power":
+                elif command in ("set_power", "set_channel_power"):
                     self._set_power(str(payload["channel"]), int(payload["value"]))
                     burst_publish = True
                 elif command == "set_multi_adjust":
