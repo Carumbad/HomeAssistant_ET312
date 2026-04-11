@@ -25,19 +25,31 @@ SENSORS: tuple[SensorEntityDescription, ...] = (
     SensorEntityDescription(
         key="power_level_a",
         name="Channel A Power",
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        suggested_display_precision=0,
     ),
     SensorEntityDescription(
         key="power_level_b",
         name="Channel B Power",
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        suggested_display_precision=0,
     ),
     SensorEntityDescription(
         key="battery_percent",
         name="Battery",
+        device_class="battery",
         native_unit_of_measurement="%",
+        state_class="measurement",
+        suggested_display_precision=0,
     ),
     SensorEntityDescription(
         key="multi_adjust",
         name="Multi Adjust",
+        native_unit_of_measurement="%",
+        state_class="measurement",
+        suggested_display_precision=0,
     ),
 )
 
